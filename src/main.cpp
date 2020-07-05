@@ -13,6 +13,7 @@
 
 #define PRINT_RESULT 1
 #define NO_PRINT 0
+#define USE_SHA_256 0
 
 // 2048-bit RSA key pairs
 static uint8_t hpPublicKey[] =
@@ -95,7 +96,7 @@ int ret;
 int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
 int receiveEncryptedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result);
 void exit();
-void printBytes(const unsigned char *byte_arr, unsigned int len);
+void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
 void printError(int errcode);
 
 void setup()
@@ -168,42 +169,18 @@ void loop()
 			{
 				printError(res);
 			}
-			else
+			else // Random string generation successful
 			{
-				Serial.println("Random string: ");
-				printBytes(rnd_string, sizeof(rnd_string));
-				char b64_buf[256];
-				size_t b64_len;
-				// encode in b64 and store it in the buffer
-				res = mbedtls_base64_encode((unsigned char *)b64_buf, sizeof(b64_buf), &b64_len,
-											rnd_string, sizeof(rnd_string));
-				if (res != 0)
-				{
-					printError(res);
-					memcpy(outbuf, rnd_string, sizeof(rnd_string));
-					to_send = sizeof(rnd_string);
-					mbedtls_sha256(rnd_string, sizeof(rnd_string), checksum, 0);
-				}
-				else
-				{
-					Serial.println("In base 64: ");
-					Serial.write((unsigned char *)b64_buf, b64_len);
-					Serial.println();
-					Serial.print(b64_len);
-					Serial.print(" characters long.");
-					memcpy(outbuf, b64_buf, b64_len);
-					to_send = b64_len;
-					mbedtls_sha256((const unsigned char *)b64_buf, b64_len, checksum, 0);
-				}
-				// Print the checksum
-				res = mbedtls_base64_encode((unsigned char *)b64_buf, sizeof(b64_buf), &b64_len,
-											checksum, sizeof(checksum));
-				if (res == 0) 
-				{
-					Serial.println("The checksum in base 64: ");
-					Serial.write((unsigned char *)b64_buf, b64_len);
-					Serial.println();
-				}
+				// copy random string to outbuf
+				memcpy(outbuf, rnd_string, sizeof(rnd_string));
+				to_send = sizeof(rnd_string);
+				// print rnd string
+				const char *header = "Random string: ";
+				printBytes(rnd_string, sizeof(rnd_string), header, strlen(header));
+				// compute the hash of rnd string and print it
+				mbedtls_sha256(rnd_string, sizeof(rnd_string), checksum, USE_SHA_256);
+				const char* hash_header = "Hash of random string: ";
+				printBytes(checksum, sizeof(checksum), hash_header, strlen(hash_header));
 			}
 		}
 		else if (outbuf[0] == '/')
@@ -221,9 +198,11 @@ void loop()
 		}
 		else // send user input
 		{
-			Serial.println("User input:");
+			Serial.print("User input: ");
+			Serial.write((const unsigned char *)outbuf, to_send);
 		}
-		printBytes((const unsigned char *)outbuf, to_send);
+		const char *header = "Unencrypted message: ";
+		printBytes((const unsigned char *)outbuf, to_send, header, strlen(header));
 		res = sendEncryptedMessage((const unsigned char *)outbuf, to_send, PRINT_RESULT);
 	}
 
@@ -231,8 +210,8 @@ void loop()
 	{
 		unsigned int to_read = SerialBT.available();
 		SerialBT.readBytes(inbuf, to_read);
-		Serial.println("Received:");
-		printBytes((const unsigned char *)inbuf, to_read);
+		const char *header = "Received: ";
+		printBytes((const unsigned char *)inbuf, to_read, header, strlen(header));
 		res = receiveEncryptedMessage((const unsigned char *)inbuf, to_read, PRINT_RESULT);
 	}
 
@@ -255,8 +234,8 @@ int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigne
 	{
 		if (print_result == PRINT_RESULT)
 		{
-			Serial.println("Sending :");
-			printBytes(encrypted, elen);
+			const char *header = "Sending: ";
+			printBytes(encrypted, elen, header, strlen(header));
 		}
 		SerialBT.write(encrypted, elen);
 		return 0;
@@ -282,18 +261,7 @@ int receiveEncryptedMessage(const unsigned char *input, unsigned int in_len, uns
 		{
 			Serial.println("Decrypted:");
 			Serial.write(decrypted, dlen);
-			Serial.println();
-			char b64_buf[256];
-			size_t b64_len;
-			// encode in b64 and store it in the buffer
-			ret = mbedtls_base64_encode((unsigned char *)b64_buf, sizeof(b64_buf), &b64_len,
-										decrypted, dlen);
-			if (ret == 0)
-			{
-				Serial.println("In base 64: ");
-				Serial.write((unsigned char *)b64_buf, b64_len);
-			}
-			Serial.println();
+			printBytes(decrypted, dlen, NULL, 0);
 		}
 		return 0;
 	}
@@ -309,18 +277,32 @@ void exit()
 	}
 }
 
-void printBytes(const unsigned char *byte_arr, unsigned int len)
+void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len)
 {
-	Serial.println("The message in bytes:");
+	char b64_buf[1024];
+	size_t b64_len;
+	if (header != NULL)
+		Serial.write((const unsigned char *)header, header_len);
+	Serial.println();
+	Serial.println("In hex:");
 	for (int i = 0; i < len; i++)
 	{
-		if ((i % 16) == 0)
+		if ((i % 16) == 0 && i != 0)
 			Serial.println();
 		char str[4];
 		sprintf(str, "%02X ", (int)byte_arr[i]);
 		Serial.print(str);
 	}
 	Serial.println();
+	int res = mbedtls_base64_encode((unsigned char *)b64_buf, sizeof(b64_buf), &b64_len,
+									byte_arr, len);
+	if (res == 0)
+	{
+		Serial.println("In base 64: ");
+		Serial.write((unsigned char *)b64_buf, b64_len);
+		Serial.println();
+	}
+	Serial.println("---");
 }
 
 void printError(int errcode)
