@@ -14,6 +14,8 @@
 #define PRINT_RESULT 1
 #define NO_PRINT 0
 #define USE_SHA_256 0
+#define SHA_256_BYTES 32
+#define RSA_MAX_BYTES 256
 
 // 2048-bit RSA key pairs
 static uint8_t hpPublicKey[] =
@@ -74,9 +76,13 @@ static size_t elen = 0;
 static uint8_t decrypted[MBEDTLS_MPI_MAX_SIZE];
 static size_t dlen = 0;
 
-char outbuf[256];
-char inbuf[256];
-unsigned char checksum[32];
+char outbuf[RSA_MAX_BYTES];
+unsigned int outbuf_len;
+
+char inbuf[RSA_MAX_BYTES];
+unsigned int inbuf_len;
+
+unsigned char checksum[SHA_256_BYTES];
 unsigned char rnd_string[MBEDTLS_ENTROPY_BLOCK_SIZE];
 
 mbedtls_pk_context encrypt_pk;
@@ -91,16 +97,26 @@ mbedtls_entropy_context gen_entropy;
 
 BluetoothSerial SerialBT;
 
-int ret;
-
 int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
-int receiveEncryptedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result);
+int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result);
+int generateChallenge();
 void exit();
 void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
 void printError(int errcode);
 
+#define STATE_DEF 0
+#define STATE_CHALLENGE 1
+#define STATE_VERIFICATION 2
+#define STATE_UNLOCK 3
+#define STATE_ALARM 4
+#define STATE_ERR 5
+
+unsigned int bt_state = STATE_DEF;
+const char *PASSWORD = "1998";
+
 void setup()
 {
+	int ret;
 	Serial.begin(115200);
 	Serial.println("Initializing...");
 
@@ -149,73 +165,155 @@ void setup()
 		printError(ret);
 		exit();
 	}
+
+	bt_state = STATE_DEF;
 	SerialBT.begin("ESP32test"); //Bluetooth device name
 	Serial.println("The device started, now you can pair it with bluetooth!");
 }
 
 void loop()
 {
-	int res;
-	if (Serial.available())
-	{
-		int to_send = Serial.available();
-		Serial.readBytes(outbuf, to_send);
-		// check if serial input is a command
-		if (outbuf[0] == '>')
-		{
-			// generate 64-chars random string
-			res = mbedtls_entropy_func(&gen_entropy, rnd_string, sizeof(rnd_string));
-			if (res != 0) // Error
-			{
-				printError(res);
-			}
-			else // Random string generation successful
-			{
-				// copy random string to outbuf
-				memcpy(outbuf, rnd_string, sizeof(rnd_string));
-				to_send = sizeof(rnd_string);
-				// print rnd string
-				const char *header = "Random string: ";
-				printBytes(rnd_string, sizeof(rnd_string), header, strlen(header));
-				// compute the hash of rnd string and print it
-				mbedtls_sha256(rnd_string, sizeof(rnd_string), checksum, USE_SHA_256);
-				const char* hash_header = "Hash of random string: ";
-				printBytes(checksum, sizeof(checksum), hash_header, strlen(hash_header));
-			}
-		}
-		else if (outbuf[0] == '/')
-		{
-			// compare the hash with the received message
-			int no_mismatch = 1;
-			for (int i = 0; i < 32 && no_mismatch; i++)
-			{
-				no_mismatch = (decrypted[i] == checksum[i]);
-			}
-			if (no_mismatch)
-				Serial.println("Checksum OK");
-			else
-				Serial.println("Checksum fail");
-		}
-		else // send user input
-		{
-			Serial.print("User input: ");
-			Serial.write((const unsigned char *)outbuf, to_send);
-		}
-		const char *header = "Unencrypted message: ";
-		printBytes((const unsigned char *)outbuf, to_send, header, strlen(header));
-		res = sendEncryptedMessage((const unsigned char *)outbuf, to_send, PRINT_RESULT);
-	}
+	int out_res=0;
+	int in_res=0;
 
-	if (SerialBT.available())
+	if ((inbuf_len = SerialBT.available()) > 0)
 	{
-		unsigned int to_read = SerialBT.available();
-		SerialBT.readBytes(inbuf, to_read);
+		SerialBT.readBytes(inbuf, inbuf_len);
 		const char *header = "Received: ";
-		printBytes((const unsigned char *)inbuf, to_read, header, strlen(header));
-		res = receiveEncryptedMessage((const unsigned char *)inbuf, to_read, PRINT_RESULT);
+		printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
+		in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
+
+		switch (bt_state)
+		{
+		case STATE_DEF:
+		{
+			// Send message to user's phone
+			if ((outbuf_len = Serial.available()) > 0)
+			{
+				Serial.readBytes(outbuf, outbuf_len);
+				Serial.print("User input: ");
+				Serial.write((const unsigned char *)outbuf, outbuf_len);
+				const char *header = "Unencrypted message: ";
+				printBytes((const unsigned char *)outbuf, outbuf_len, header, strlen(header));
+				out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
+			}
+
+			// change state depending on user input
+			if (out_res != 0 || in_res != 0)
+			{
+				bt_state = STATE_ERR;
+			}
+			else
+			{
+				int no_mismatch = 1;
+				for (int i = 0; i < strlen(PASSWORD) && no_mismatch; i++)
+				{
+					no_mismatch = (PASSWORD[i] == decrypted[i]);
+				}
+
+				if (no_mismatch)
+				{
+					Serial.print("State: Challenge");
+					bt_state = STATE_CHALLENGE;
+				}
+				else
+					bt_state = STATE_DEF;
+			}
+			break;
+		}
+		case STATE_CHALLENGE:
+		{
+			out_res = generateChallenge();
+			if (out_res != 0) // Challenge generation fail
+			{
+				bt_state = STATE_ERR;
+			}
+			else
+			{
+				out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
+				if (out_res != 0) // error
+				{
+					bt_state = STATE_ERR;
+				}
+				else
+				{
+					Serial.println("State: Verification");
+					bt_state = STATE_VERIFICATION;
+				}
+			}
+			break;
+		}
+		case STATE_VERIFICATION:
+		{
+			// compare the received hash with the original hash from device
+			int no_mismatch = 1;
+			for (int i = 0; i < sizeof(checksum) && no_mismatch; i++)
+			{
+				no_mismatch = (checksum[i] == decrypted[i]);
+			}
+
+			if (no_mismatch)
+			{
+				bt_state = STATE_UNLOCK;
+				Serial.println("State: Unlock");
+			}
+			else
+				bt_state = STATE_ALARM;
+			break;
+		}
+		case STATE_UNLOCK:
+		{
+			Serial.println("!!!! DEVICE UNLOCKED !!!!");
+			Serial.println("Please wait for a second to proceed");
+			delay(1000);
+			bt_state = STATE_DEF;
+			break;
+		}
+		case STATE_ALARM:
+		{
+			Serial.println("WARNING: INTRUDER DETECTED, MAXIMUM ALERT, OPCODE : OPERATION KILL DA THUG");
+			Serial.println("ACTIVATING DA LAZER BEAMZ");
+			delay(1000);
+			bt_state = STATE_DEF;
+			break;
+		}
+		case STATE_ERR:
+		{
+			Serial.println("Fatal Error! Please restart your device.");
+			exit();
+			break;
+		}
+		default:
+			bt_state = STATE_DEF;
+		}
 	}
 
 	delay(20);
+}
+
+int generateChallenge()
+{
+	// generate 64-chars random string
+	int res = mbedtls_entropy_func(&gen_entropy, rnd_string, sizeof(rnd_string));
+	if (res != 0) // Error
+	{
+		printError(res);
+		return 1;
+	}
+	else // Random string generation successful
+	{
+		// copy random string to outbuf
+		memcpy(outbuf, rnd_string, sizeof(rnd_string));
+		outbuf_len = sizeof(rnd_string);
+		// print rnd string
+		const char *header = "Random string: ";
+		printBytes(rnd_string, sizeof(rnd_string), header, strlen(header));
+		// compute the hash of rnd string and print it
+		mbedtls_sha256(rnd_string, sizeof(rnd_string), checksum, USE_SHA_256);
+		const char *hash_header = "Hash of random string: ";
+		printBytes(checksum, sizeof(checksum), hash_header, strlen(hash_header));
+		return 0;
+	}
 }
 
 int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result)
@@ -227,7 +325,6 @@ int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigne
 								  mbedtls_ctr_drbg_random, &encrypt_ctr_drbg)) != 0)
 	{
 		printError(ret);
-		Serial.print(" Decryption error!");
 		return 1;
 	}
 	else // encrypt ok
@@ -242,7 +339,7 @@ int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigne
 	}
 }
 
-int receiveEncryptedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result)
+int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result)
 {
 	// Decrypt
 	int ret;
@@ -252,7 +349,6 @@ int receiveEncryptedMessage(const unsigned char *input, unsigned int in_len, uns
 	{
 		// Decryption error
 		printError(ret);
-		Serial.print(" Decryption error!");
 		return 1;
 	}
 	else // Decryption OK
