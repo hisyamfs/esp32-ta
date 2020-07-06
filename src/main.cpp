@@ -173,33 +173,32 @@ void setup()
 
 void loop()
 {
-	int out_res=0;
-	int in_res=0;
+	int out_res = 0;
+	int in_res = 0;
 
-	if ((inbuf_len = SerialBT.available()) > 0)
+	switch (bt_state)
 	{
-		SerialBT.readBytes(inbuf, inbuf_len);
-		const char *header = "Received: ";
-		printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
-		in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
-
-		switch (bt_state)
+	case STATE_DEF:
+	{
+		// Send message to user's phone
+		if ((outbuf_len = Serial.available()) > 0)
 		{
-		case STATE_DEF:
-		{
-			// Send message to user's phone
-			if ((outbuf_len = Serial.available()) > 0)
-			{
-				Serial.readBytes(outbuf, outbuf_len);
-				Serial.print("User input: ");
-				Serial.write((const unsigned char *)outbuf, outbuf_len);
-				const char *header = "Unencrypted message: ";
-				printBytes((const unsigned char *)outbuf, outbuf_len, header, strlen(header));
-				out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
-			}
+			Serial.readBytes(outbuf, outbuf_len);
+			Serial.print("User input: ");
+			Serial.write((const unsigned char *)outbuf, outbuf_len);
+			const char *header = "Unencrypted message: ";
+			printBytes((const unsigned char *)outbuf, outbuf_len, header, strlen(header));
+			out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
+		}
 
+		if ((inbuf_len = SerialBT.available()) > 0)
+		{
+			SerialBT.readBytes(inbuf, inbuf_len);
+			const char *header = "Received: ";
+			printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
+			in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
 			// change state depending on user input
-			if (out_res != 0 || in_res != 0)
+			if (in_res != 0)
 			{
 				bt_state = STATE_ERR;
 			}
@@ -219,77 +218,90 @@ void loop()
 				else
 					bt_state = STATE_DEF;
 			}
-			break;
 		}
-		case STATE_CHALLENGE:
+		break;
+	}
+	case STATE_CHALLENGE:
+	{
+		out_res = generateChallenge();
+		if (out_res != 0) // Challenge generation fail
 		{
-			out_res = generateChallenge();
-			if (out_res != 0) // Challenge generation fail
+			bt_state = STATE_ERR;
+		}
+		else
+		{
+			out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
+			if (out_res != 0) // error
 			{
 				bt_state = STATE_ERR;
 			}
 			else
 			{
-				out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
-				if (out_res != 0) // error
+				Serial.println("State: Verification");
+				bt_state = STATE_VERIFICATION;
+			}
+		}
+		break;
+	}
+	case STATE_VERIFICATION:
+	{
+		if ((inbuf_len = SerialBT.available()) > 0)
+		{
+			SerialBT.readBytes(inbuf, inbuf_len);
+			const char *header = "Received: ";
+			printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
+			in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
+			if (in_res != 0)
+				bt_state = STATE_ERR;
+			else
+			{
+				// compare the received hash with the original hash from device
+				int no_mismatch = 1;
+				for (int i = 0; i < sizeof(checksum) && no_mismatch; i++)
 				{
-					bt_state = STATE_ERR;
+					no_mismatch = (checksum[i] == decrypted[i]);
+				}
+
+				if (no_mismatch)
+				{
+					bt_state = STATE_UNLOCK;
+					Serial.println("State: Unlock");
 				}
 				else
-				{
-					Serial.println("State: Verification");
-					bt_state = STATE_VERIFICATION;
-				}
+					bt_state = STATE_ALARM;
 			}
-			break;
 		}
-		case STATE_VERIFICATION:
-		{
-			// compare the received hash with the original hash from device
-			int no_mismatch = 1;
-			for (int i = 0; i < sizeof(checksum) && no_mismatch; i++)
-			{
-				no_mismatch = (checksum[i] == decrypted[i]);
-			}
-
-			if (no_mismatch)
-			{
-				bt_state = STATE_UNLOCK;
-				Serial.println("State: Unlock");
-			}
-			else
-				bt_state = STATE_ALARM;
-			break;
-		}
-		case STATE_UNLOCK:
-		{
-			Serial.println("!!!! DEVICE UNLOCKED !!!!");
-			Serial.println("Please wait for a second to proceed");
-			delay(1000);
-			bt_state = STATE_DEF;
-			break;
-		}
-		case STATE_ALARM:
-		{
-			Serial.println("WARNING: INTRUDER DETECTED, MAXIMUM ALERT, OPCODE : OPERATION KILL DA THUG");
-			Serial.println("ACTIVATING DA LAZER BEAMZ");
-			delay(1000);
-			bt_state = STATE_DEF;
-			break;
-		}
-		case STATE_ERR:
-		{
-			Serial.println("Fatal Error! Please restart your device.");
-			exit();
-			break;
-		}
-		default:
-			bt_state = STATE_DEF;
-		}
+		break;
 	}
-
+	case STATE_UNLOCK:
+	{
+		Serial.println("!!!! DEVICE UNLOCKED !!!!");
+		Serial.println("Please wait for a second to proceed");
+		delay(1000);
+		bt_state = STATE_DEF;
+		break;
+	}
+	case STATE_ALARM:
+	{
+		Serial.println("WARNING: INTRUDER DETECTED, MAXIMUM ALERT, OPCODE : OPERATION KILL DA THUG");
+		Serial.println("ACTIVATING DA LAZER BEAMZ");
+		delay(1000);
+		bt_state = STATE_DEF;
+		break;
+	}
+	case STATE_ERR:
+	{
+		Serial.println("Fatal Error! Please restart your device.");
+		exit();
+		break;
+	}
+	default:
+		bt_state = STATE_DEF;
+	}
+	
 	delay(20);
 }
+
 
 int generateChallenge()
 {
