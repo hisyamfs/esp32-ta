@@ -184,9 +184,9 @@ void loop()
 		if ((outbuf_len = Serial.available()) > 0)
 		{
 			Serial.readBytes(outbuf, outbuf_len);
-			Serial.print("User input: ");
+			Serial.print("Input pengguna: ");
 			Serial.write((const unsigned char *)outbuf, outbuf_len);
-			const char *header = "Unencrypted message: ";
+			const char *header = "Pesan tak terenkripsi: ";
 			printBytes((const unsigned char *)outbuf, outbuf_len, header, strlen(header));
 			out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
 		}
@@ -194,7 +194,7 @@ void loop()
 		if ((inbuf_len = SerialBT.available()) > 0)
 		{
 			SerialBT.readBytes(inbuf, inbuf_len);
-			const char *header = "Received: ";
+			const char *header = "Pesan diterima: ";
 			printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
 			in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
 			// change state depending on user input
@@ -248,7 +248,7 @@ void loop()
 		if ((inbuf_len = SerialBT.available()) > 0)
 		{
 			SerialBT.readBytes(inbuf, inbuf_len);
-			const char *header = "Received: ";
+			const char *header = "Pesan diterima: ";
 			printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
 			in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
 			if (in_res != 0)
@@ -276,22 +276,21 @@ void loop()
 	case STATE_UNLOCK:
 	{
 		Serial.println("!!!! DEVICE UNLOCKED !!!!");
-		Serial.println("Please wait for a second to proceed");
+		Serial.println("Silahkan tunggu 1 detik...");
 		delay(1000);
 		bt_state = STATE_DEF;
 		break;
 	}
 	case STATE_ALARM:
 	{
-		Serial.println("WARNING: INTRUDER DETECTED, MAXIMUM ALERT, OPCODE : OPERATION KILL DA THUG");
-		Serial.println("ACTIVATING DA LAZER BEAMZ");
+		Serial.println("!!!! ALARM ON !!!!");
 		delay(1000);
 		bt_state = STATE_DEF;
 		break;
 	}
 	case STATE_ERR:
 	{
-		Serial.println("Fatal Error! Please restart your device.");
+		Serial.println("ERROR!! : Silahkan restart device anda.");
 		exit();
 		break;
 	}
@@ -322,7 +321,7 @@ int generateChallenge()
 		printBytes(rnd_string, sizeof(rnd_string), header, strlen(header));
 		// compute the hash of rnd string and print it
 		mbedtls_sha256(rnd_string, sizeof(rnd_string), checksum, USE_SHA_256);
-		const char *hash_header = "Hash of random string: ";
+		const char *hash_header = "Hash dari random string: ";
 		printBytes(checksum, sizeof(checksum), hash_header, strlen(hash_header));
 		return 0;
 	}
@@ -343,7 +342,7 @@ int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigne
 	{
 		if (print_result == PRINT_RESULT)
 		{
-			const char *header = "Sending: ";
+			const char *header = "Mengirim: ";
 			printBytes(encrypted, elen, header, strlen(header));
 		}
 		SerialBT.write(encrypted, elen);
@@ -367,7 +366,7 @@ int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsi
 	{
 		if (print_result == PRINT_RESULT)
 		{
-			Serial.println("Decrypted:");
+			Serial.println("Pesan terdekripsi:");
 			Serial.write(decrypted, dlen);
 			printBytes(decrypted, dlen, NULL, 0);
 		}
@@ -392,7 +391,7 @@ void printBytes(const unsigned char *byte_arr, unsigned int len, const char *hea
 	if (header != NULL)
 		Serial.write((const unsigned char *)header, header_len);
 	Serial.println();
-	Serial.println("In hex:");
+	Serial.println("Hex:");
 	for (int i = 0; i < len; i++)
 	{
 		if ((i % 16) == 0 && i != 0)
@@ -406,7 +405,7 @@ void printBytes(const unsigned char *byte_arr, unsigned int len, const char *hea
 									byte_arr, len);
 	if (res == 0)
 	{
-		Serial.println("In base 64: ");
+		Serial.println("Base 64: ");
 		Serial.write((unsigned char *)b64_buf, b64_len);
 		Serial.println();
 	}
