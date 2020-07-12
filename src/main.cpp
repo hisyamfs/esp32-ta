@@ -103,6 +103,7 @@ int generateChallenge();
 void exit();
 void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
 void printError(int errcode);
+void generateKeyPair();
 
 #define STATE_DEF 0
 #define STATE_CHALLENGE 1
@@ -114,64 +115,7 @@ void printError(int errcode);
 unsigned int bt_state = STATE_DEF;
 const char *PASSWORD = "1998";
 
-void setup()
-{
-	int ret;
-	Serial.begin(115200);
-	Serial.println("Initializing...");
-
-	mbedtls_pk_init(&encrypt_pk);
-	mbedtls_entropy_init(&encrypt_entropy);
-	mbedtls_ctr_drbg_init(&encrypt_ctr_drbg);
-
-	mbedtls_pk_init(&decrypt_pk);
-	mbedtls_entropy_init(&decrypt_entropy);
-	mbedtls_ctr_drbg_init(&decrypt_ctr_drbg);
-
-	mbedtls_entropy_init(&gen_entropy);
-
-	Serial.println("Seeding encrypt_entropy function...");
-	ret = mbedtls_ctr_drbg_seed(&encrypt_ctr_drbg, mbedtls_entropy_func, &encrypt_entropy,
-								NULL, 0);
-	if (ret != 0)
-	{
-		// Randomizer error
-		printError(ret);
-		exit();
-	}
-
-	Serial.println("Seeding decrypt_entropy function...");
-	ret = mbedtls_ctr_drbg_seed(&decrypt_ctr_drbg, mbedtls_entropy_func, &decrypt_entropy,
-								NULL, 0);
-	if (ret != 0)
-	{
-		// Randomizer error
-		printError(ret);
-		exit();
-	}
-
-	Serial.println("Loading public RSA key...");
-	// Read the public key of user's phone
-	if ((ret = mbedtls_pk_parse_public_key(&encrypt_pk, hpPublicKey, sizeof(hpPublicKey))) != 0)
-	{
-		// public key error
-		printError(ret);
-		exit();
-	}
-	Serial.println("Loading RSA private key...");
-	if ((ret = mbedtls_pk_parse_key(&decrypt_pk, dPrivKey, sizeof(dPrivKey), NULL, 0)) != 0)
-	{
-		// public key error
-		printError(ret);
-		exit();
-	}
-
-	bt_state = STATE_DEF;
-	SerialBT.begin("ESP32test"); //Bluetooth device name
-	Serial.println("The device started, now you can pair it with bluetooth!");
-}
-
-void loop()
+void fsm()
 {
 	int out_res = 0;
 	int in_res = 0;
@@ -297,10 +241,72 @@ void loop()
 	default:
 		bt_state = STATE_DEF;
 	}
-	
-	delay(20);
 }
 
+void setup()
+{
+	int ret;
+	Serial.begin(115200);
+	Serial.println("Initializing...");
+
+	mbedtls_pk_init(&encrypt_pk);
+	mbedtls_entropy_init(&encrypt_entropy);
+	mbedtls_ctr_drbg_init(&encrypt_ctr_drbg);
+
+	mbedtls_pk_init(&decrypt_pk);
+	mbedtls_entropy_init(&decrypt_entropy);
+	mbedtls_ctr_drbg_init(&decrypt_ctr_drbg);
+
+	mbedtls_entropy_init(&gen_entropy);
+
+	Serial.println("Seeding encrypt_entropy function...");
+	ret = mbedtls_ctr_drbg_seed(&encrypt_ctr_drbg, mbedtls_entropy_func, &encrypt_entropy,
+								NULL, 0);
+	if (ret != 0)
+	{
+		// Randomizer error
+		printError(ret);
+		exit();
+	}
+
+	Serial.println("Seeding decrypt_entropy function...");
+	ret = mbedtls_ctr_drbg_seed(&decrypt_ctr_drbg, mbedtls_entropy_func, &decrypt_entropy,
+								NULL, 0);
+	if (ret != 0)
+	{
+		// Randomizer error
+		printError(ret);
+		exit();
+	}
+
+	Serial.println("Loading public RSA key...");
+	// Read the public key of user's phone
+	if ((ret = mbedtls_pk_parse_public_key(&encrypt_pk, hpPublicKey, sizeof(hpPublicKey))) != 0)
+	{
+		// public key error
+		printError(ret);
+		exit();
+	}
+	Serial.println("Loading RSA private key...");
+	if ((ret = mbedtls_pk_parse_key(&decrypt_pk, dPrivKey, sizeof(dPrivKey), NULL, 0)) != 0)
+	{
+		// public key error
+		printError(ret);
+		exit();
+	}
+
+	bt_state = STATE_DEF;
+	SerialBT.begin("ESP32test"); //Bluetooth device name
+	Serial.println("The device started, now you can pair it with bluetooth!");
+
+	generateKeyPair();
+}
+
+void loop()
+{
+	// fsm();
+	// delay(20);
+}
 
 int generateChallenge()
 {
@@ -417,4 +423,95 @@ void printError(int errcode)
 	char buf[256];
 	mbedtls_strerror(errcode, buf, sizeof(buf));
 	Serial.write((unsigned char *)buf, strlen(buf));
+}
+
+void generateKeyPair()
+{
+	mbedtls_pk_context gk;
+	mbedtls_rsa_context* rsa;
+	mbedtls_entropy_context gk_entropy;
+	mbedtls_ctr_drbg_context gk_ctr_drbg;
+	mbedtls_mpi N, P, Q, D, E, DP, DQ, QP;
+	mbedtls_pk_init(&gk);
+	mbedtls_ctr_drbg_init(&gk_ctr_drbg);
+	mbedtls_entropy_init(&gk_entropy);
+
+	// init with sane values. Don't know what it means though.
+	mbedtls_mpi_init(&N);
+	mbedtls_mpi_init(&P);
+	mbedtls_mpi_init(&Q);
+	mbedtls_mpi_init(&D);
+	mbedtls_mpi_init(&E);
+	mbedtls_mpi_init(&DP);
+	mbedtls_mpi_init(&DQ);
+	mbedtls_mpi_init(&QP);
+
+	int ret = mbedtls_ctr_drbg_seed(&gk_ctr_drbg, mbedtls_entropy_func, &gk_entropy,
+									NULL, 0);
+	if (ret != 0)
+	{
+		printError(ret);
+		exit();
+	}
+
+	Serial.println("Generating RS....");
+	ret = mbedtls_pk_setup(&gk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+	if (ret != 0)
+	{
+		printError(ret);
+		exit();
+	}
+	rsa = mbedtls_pk_rsa(gk);
+	ret = mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &gk_ctr_drbg, 2048, 65537);
+	if (ret != 0)
+	{
+		printError(ret);
+		exit();
+	}
+	ret = mbedtls_rsa_export(rsa, &N, &P, &Q, &D, &E);
+	if (ret != 0)
+	{
+		printError(ret);
+		exit();
+	}
+	ret = mbedtls_rsa_export_crt(rsa, &DP, &DQ, &QP);
+	if (ret != 0)
+	{
+		printError(ret);
+		exit();
+	}
+
+	Serial.println("Writing to serial....");
+	unsigned char key_buf[2048];
+	unsigned int key_len = 0;
+	ret = mbedtls_pk_write_key_pem(&gk, key_buf, sizeof(key_buf));
+	if (ret != 0)
+	{
+		printError(ret);
+		exit();
+	}
+	key_len = strlen((char*) key_buf);
+	Serial.write(key_buf, key_len);
+
+	ret = mbedtls_pk_write_pubkey_pem(&gk, key_buf, sizeof(key_buf));
+	if (ret != 0)
+	{
+		printError(ret);
+		exit();
+	}
+	key_len = strlen((char*) key_buf);
+	Serial.write(key_buf, key_len);
+
+	mbedtls_mpi_free(&N);
+	mbedtls_mpi_free(&P);
+	mbedtls_mpi_free(&Q);
+	mbedtls_mpi_free(&D);
+	mbedtls_mpi_free(&E);
+	mbedtls_mpi_free(&DP);
+	mbedtls_mpi_free(&DQ);
+	mbedtls_mpi_free(&QP);
+
+	mbedtls_rsa_free(rsa);
+	mbedtls_ctr_drbg_free(&gk_ctr_drbg);
+	mbedtls_entropy_free(&gk_entropy);
 }
