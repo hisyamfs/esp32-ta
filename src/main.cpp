@@ -1,6 +1,7 @@
 #include "Arduino.h"
 #include "BluetoothSerial.h"
 #include "mbedtls/pk.h"
+#include "mbedtls/cipher.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/error.h"
@@ -70,6 +71,9 @@ static uint8_t dPrivKey[] =
 	"CCW6eRGCFtEwWJZcsMDSEb4dOQ==\n"
 	"-----END PRIVATE KEY-----\n";
 
+const char symkey[] =
+	"abcdefghijklmnop";
+
 static uint8_t encrypted[MBEDTLS_MPI_MAX_SIZE];
 static size_t elen = 0;
 
@@ -97,6 +101,13 @@ mbedtls_entropy_context decrypt_entropy;
 mbedtls_ctr_drbg_context decrypt_ctr_drbg;
 
 mbedtls_entropy_context gen_entropy;
+
+mbedtls_aes_context aes;
+// mbedtls_cipher_context_t cipher_enc;
+// mbedtls_cipher_info_t *cipher_enc_info;
+
+// mbedtls_cipher_context_t cipher_dec;
+// mbedtls_cipher_info_t *cipher_dec_info;
 
 BluetoothSerial SerialBT;
 
@@ -282,23 +293,88 @@ void setup()
 		exit();
 	}
 
-	// Serial.println("Loading public RSA key...");
-	// // Read the public key of user's phone
-	// if ((ret = mbedtls_pk_parse_public_key(&encrypt_pk, hpPublicKey, sizeof(hpPublicKey))) != 0)
+	Serial.println("Loading public RSA key...");
+	// Read the public key of user's phone
+	if ((ret = mbedtls_pk_parse_public_key(&encrypt_pk, hpPublicKey, sizeof(hpPublicKey))) != 0)
+	{
+		// public key error
+		printError(ret);
+		exit();
+	}
+	Serial.println("Loading RSA private key...");
+	if ((ret = mbedtls_pk_parse_key(&decrypt_pk, dPrivKey, sizeof(dPrivKey), NULL, 0)) != 0)
+	{
+		// public key error
+		printError(ret);
+		exit();
+	}
+
+	Serial.println("Initializing AES Encryption Cipher...");
+	mbedtls_aes_init(&aes);
+	if ((ret = mbedtls_aes_setkey_enc(&aes, (const unsigned char*) symkey, strlen(symkey) * 8)) != 0)
+	{
+		printError(ret);
+		exit();
+	}
+	if ((ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char*) symkey, strlen(symkey) * 8)) != 0)
+	{
+		printError(ret);
+		exit();
+	}
+	// mbedtls_cipher_init(&cipher_enc);
+	// ret = mbedtls_cipher_setup(&cipher_enc,
+	// 						   mbedtls_cipher_info_from_values(MBEDTLS_CIPHER_ID_AES, 128, MBEDTLS_MODE_ECB));
+	// if (ret != 0)
 	// {
-	// 	// public key error
+	// 	Serial.println("Error on setup");
 	// 	printError(ret);
 	// 	exit();
 	// }
-	// Serial.println("Loading RSA private key...");
-	// if ((ret = mbedtls_pk_parse_key(&decrypt_pk, dPrivKey, sizeof(dPrivKey), NULL, 0)) != 0)
+	// ret = mbedtls_cipher_setkey(&cipher_enc, symkey, sizeof(symkey) * 8, MBEDTLS_ENCRYPT);
+	// if (ret != 0)
 	// {
-	// 	// public key error
+	// 	int keylen = sizeof(symkey) * 8;
+	// 	Serial.println("Error on key set");
+	// 	Serial.println(keylen);
+	// 	printError(ret);
+	// 	exit();
+	// }
+	// // ret = mbedtls_cipher_set_padding_mode(&cipher_enc, MBEDTLS_PADDING_PKCS7);
+	// // if (ret != 0)
+	// // {
+	// // 	Serial.println("Error on pad set");
+	// // 	printError(ret);
+	// // 	exit();
+	// // }
+
+	// Serial.println("Initializing AES Decryption Cipher....");
+	// mbedtls_cipher_init(&cipher_dec);
+	// ret = mbedtls_cipher_setup(&cipher_dec,
+	// 						   mbedtls_cipher_info_from_values(MBEDTLS_CIPHER_ID_AES, 128, MBEDTLS_MODE_ECB));
+	// if (ret != 0)
+	// {
+	// 	Serial.println("Error on set up");
+	// 	printError(ret);
+	// 	exit();
+	// }
+	// ret = mbedtls_cipher_setkey(&cipher_dec, symkey, sizeof(symkey) * 8, MBEDTLS_DECRYPT);
+	// if (ret != 0)
+	// {
+	// 	int keylen = sizeof(symkey) * 8;
+	// 	Serial.println("Error on key set");
+	// 	Serial.println(keylen);
+	// 	printError(ret);
+	// 	exit();
+	// }
+	// ret = mbedtls_cipher_set_padding_mode(&cipher_dec, MBEDTLS_PADDING_PKCS7);
+	// if (ret != 0)
+	// {
+	// 	Serial.println("Error on pad set");
 	// 	printError(ret);
 	// 	exit();
 	// }
 
-	// bt_state = STATE_DEF;
+	bt_state = STATE_DEF;
 	SerialBT.begin("ESP32test"); //Bluetooth device name
 	Serial.println("The device started, now you can pair it with bluetooth!");
 	outbuf[0] = '\0';
@@ -308,53 +384,7 @@ void setup()
 
 void loop()
 {
-	int result = 0;
-	if (Serial.available() > 0)
-	{
-		outbuf_len = Serial.available();
-		Serial.readBytes(outbuf, outbuf_len);
-		if (outbuf[0] == '!')
-		{
-			Serial.println("Parsing newest data at inbuf as encryption public key");
-			Serial.print("inbuf length: ");
-			Serial.println(keylen);
-			Serial.write((const unsigned char *)keybuf, keylen);
-			result = mbedtls_pk_parse_public_key(&encrypt_pk, (const unsigned char *)keybuf, keylen);
-			if (result != 0)
-			{
-				printError(result);
-				mbedtls_pk_free(&encrypt_pk);
-			}
-			else
-			{
-				Serial.println("Berhasil me-load kunci public HP");
-			}
-		}
-		else if (outbuf[0] == '/')
-		{
-			result = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
-		}
-		else
-		{
-			Serial.println("Sending: ");
-			printBytes((const unsigned char *)outbuf, outbuf_len, NULL, 0);
-			SerialBT.write((unsigned char *)outbuf, outbuf_len);
-		}
-	}
-
-	if (SerialBT.available() > 0)
-	{
-		inbuf_len = SerialBT.available();
-		SerialBT.readBytes(inbuf, inbuf_len);
-		Serial.print("Pesan diterima: ");
-		Serial.println(inbuf_len);
-		Serial.write((char unsigned *)inbuf, inbuf_len);
-		memcpy(keybuf, inbuf, inbuf_len);
-		// append key buffer so that it's null terminated
-		keylen = inbuf_len + 1;
-		keybuf[keylen] = '\0';
-		printBytes((const unsigned char *)inbuf, inbuf_len, NULL, 0); // Somehting happen'd here???
-	}
+	fsm();
 	delay(20);
 }
 
@@ -386,48 +416,75 @@ int generateChallenge()
 int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result)
 {
 	// Encrypt
-	int ret;
-	if ((ret = mbedtls_pk_encrypt(&encrypt_pk, message, len,
-								  encrypted, &elen, sizeof(encrypted),
-								  mbedtls_ctr_drbg_random, &encrypt_ctr_drbg)) != 0)
+	char aes_buf[16];
+	int ret = 0;
+	elen = 0;
+	for (int i = 0; i < len && ret == 0; i += 16)
 	{
-		printError(ret);
-		return 1;
-	}
-	else // encrypt ok
-	{
-		if (print_result == PRINT_RESULT)
+		// copy message to 16-byte block buffer and pad if needed
+		unsigned int k = (len - i > 16) ? 16 : (unsigned int)(len - i); // number of bytes to be copied to the block buffer
+		memcpy(aes_buf, message + i, k);
+		// if (k != 16) // number of bytes is not multiple of 16, use padding
+		// {
+		// 	for (int j = k; j < 16; j++)
+		// 	{
+		// 		aes_buf[j] = k; // pad w/ PKCS5 style padding
+		// 	}
+		// }
+		// encrypt the buffer
+		ret = mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, (const unsigned char *)aes_buf, encrypted + i);
+		if (ret != 0)
 		{
-			const char *header = "Mengirim: ";
-			printBytes(encrypted, elen, header, strlen(header));
+			printError(ret);
+			return 1;
 		}
-		SerialBT.write(encrypted, elen);
-		return 0;
+		elen += 16;
 	}
+
+	if (print_result == PRINT_RESULT) // Encryption OK
+	{
+		const char *header = "Mengirim: ";
+		printBytes(encrypted, elen, header, strlen(header));
+	}
+	SerialBT.write(encrypted, elen);
+	return 0;
 }
 
 int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result)
 {
 	// Decrypt
-	int ret;
-	if ((ret = mbedtls_pk_decrypt(&decrypt_pk, input, in_len,
-								  decrypted, &dlen, sizeof(decrypted),
-								  mbedtls_ctr_drbg_random, &decrypt_ctr_drbg)) != 0)
+	char aes_buf[16];
+	int ret = 0;
+	dlen = 0;
+	for (int i = 0; i < in_len && ret == 0; i += 16)
 	{
-		// Decryption error
-		printError(ret);
-		return 1;
-	}
-	else // Decryption OK
-	{
-		if (print_result == PRINT_RESULT)
-		{
-			Serial.println("Pesan terdekripsi:");
-			Serial.write(decrypted, dlen);
-			printBytes(decrypted, dlen, NULL, 0);
+		// copy message to 16-byte block buffer and pad if needed
+		unsigned int k = (in_len - i > 16) ? 16 : (unsigned int)(in_len - i); // number of bytes to be copied to the block buffer
+		memcpy(aes_buf, input + i, k);
+		// shouldn't happen if the encryption process is properly done on the sender
+		if (k != 16) {// number of bytes is not multiple of 16, use padding
+			for (int j = k; j < 16; j++)
+			{
+				aes_buf[j] = '-'; // pad w/ stripline
+			}
 		}
-		return 0;
+		// decrypt the buffer
+		ret = mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, (const unsigned char *)aes_buf, decrypted + i);
+		if (ret != 0)
+		{
+			printError(ret);
+			return 1;
+		} 
+		dlen += 16;
 	}
+
+	if (print_result == PRINT_RESULT)
+	{
+		Serial.println("Pesan terdekripsi:");
+		Serial.write(decrypted, dlen);
+		printBytes(decrypted, dlen, NULL, 0);
+	}
+	return 0;
 }
 
 void exit()
@@ -435,6 +492,11 @@ void exit()
 	mbedtls_pk_free(&encrypt_pk);
 	mbedtls_ctr_drbg_free(&encrypt_ctr_drbg);
 	mbedtls_entropy_free(&encrypt_entropy);
+	mbedtls_pk_free(&decrypt_pk);
+	mbedtls_ctr_drbg_free(&decrypt_ctr_drbg);
+	mbedtls_entropy_free(&decrypt_entropy);
+	mbedtls_aes_free(&aes);
+
 	while (true)
 	{
 	}
