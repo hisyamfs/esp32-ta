@@ -87,7 +87,7 @@ char inbuf[RSA_MAX_BYTES];
 unsigned int inbuf_len;
 
 unsigned char checksum[SHA_256_BYTES];
-unsigned char rnd_string[MBEDTLS_ENTROPY_BLOCK_SIZE];
+unsigned char rnd_string[16];
 
 static unsigned char keybuf[1024];
 static unsigned int keylen = 0;
@@ -144,6 +144,9 @@ void fsm()
 			Serial.readBytes(outbuf, outbuf_len);
 			Serial.print("Input pengguna: ");
 			Serial.write((const unsigned char *)outbuf, outbuf_len);
+			Serial.print(" (");
+			Serial.print(outbuf_len);
+			Serial.println(")");
 			const char *header = "Pesan tak terenkripsi: ";
 			printBytes((const unsigned char *)outbuf, outbuf_len, header, strlen(header));
 			out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
@@ -311,68 +314,16 @@ void setup()
 
 	Serial.println("Initializing AES Encryption Cipher...");
 	mbedtls_aes_init(&aes);
-	if ((ret = mbedtls_aes_setkey_enc(&aes, (const unsigned char*) symkey, strlen(symkey) * 8)) != 0)
+	if ((ret = mbedtls_aes_setkey_enc(&aes, (const unsigned char *)symkey, strlen(symkey) * 8)) != 0)
 	{
 		printError(ret);
 		exit();
 	}
-	if ((ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char*) symkey, strlen(symkey) * 8)) != 0)
+	if ((ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char *)symkey, strlen(symkey) * 8)) != 0)
 	{
 		printError(ret);
 		exit();
 	}
-	// mbedtls_cipher_init(&cipher_enc);
-	// ret = mbedtls_cipher_setup(&cipher_enc,
-	// 						   mbedtls_cipher_info_from_values(MBEDTLS_CIPHER_ID_AES, 128, MBEDTLS_MODE_ECB));
-	// if (ret != 0)
-	// {
-	// 	Serial.println("Error on setup");
-	// 	printError(ret);
-	// 	exit();
-	// }
-	// ret = mbedtls_cipher_setkey(&cipher_enc, symkey, sizeof(symkey) * 8, MBEDTLS_ENCRYPT);
-	// if (ret != 0)
-	// {
-	// 	int keylen = sizeof(symkey) * 8;
-	// 	Serial.println("Error on key set");
-	// 	Serial.println(keylen);
-	// 	printError(ret);
-	// 	exit();
-	// }
-	// // ret = mbedtls_cipher_set_padding_mode(&cipher_enc, MBEDTLS_PADDING_PKCS7);
-	// // if (ret != 0)
-	// // {
-	// // 	Serial.println("Error on pad set");
-	// // 	printError(ret);
-	// // 	exit();
-	// // }
-
-	// Serial.println("Initializing AES Decryption Cipher....");
-	// mbedtls_cipher_init(&cipher_dec);
-	// ret = mbedtls_cipher_setup(&cipher_dec,
-	// 						   mbedtls_cipher_info_from_values(MBEDTLS_CIPHER_ID_AES, 128, MBEDTLS_MODE_ECB));
-	// if (ret != 0)
-	// {
-	// 	Serial.println("Error on set up");
-	// 	printError(ret);
-	// 	exit();
-	// }
-	// ret = mbedtls_cipher_setkey(&cipher_dec, symkey, sizeof(symkey) * 8, MBEDTLS_DECRYPT);
-	// if (ret != 0)
-	// {
-	// 	int keylen = sizeof(symkey) * 8;
-	// 	Serial.println("Error on key set");
-	// 	Serial.println(keylen);
-	// 	printError(ret);
-	// 	exit();
-	// }
-	// ret = mbedtls_cipher_set_padding_mode(&cipher_dec, MBEDTLS_PADDING_PKCS7);
-	// if (ret != 0)
-	// {
-	// 	Serial.println("Error on pad set");
-	// 	printError(ret);
-	// 	exit();
-	// }
 
 	bt_state = STATE_DEF;
 	SerialBT.begin("ESP32test"); //Bluetooth device name
@@ -390,7 +341,7 @@ void loop()
 
 int generateChallenge()
 {
-	// generate 64-chars random string
+	// generate 16-chars random string
 	int res = mbedtls_entropy_func(&gen_entropy, rnd_string, sizeof(rnd_string));
 	if (res != 0) // Error
 	{
@@ -422,15 +373,15 @@ int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigne
 	for (int i = 0; i < len && ret == 0; i += 16)
 	{
 		// copy message to 16-byte block buffer and pad if needed
-		unsigned int k = (len - i > 16) ? 16 : (unsigned int)(len - i); // number of bytes to be copied to the block buffer
+		unsigned int k = ((len - i) > 16) ? 16 : (unsigned int)(len - i); // number of bytes to be copied to the block buffer
 		memcpy(aes_buf, message + i, k);
-		// if (k != 16) // number of bytes is not multiple of 16, use padding
-		// {
-		// 	for (int j = k; j < 16; j++)
-		// 	{
-		// 		aes_buf[j] = k; // pad w/ PKCS5 style padding
-		// 	}
-		// }
+		if (k != 16) // number of bytes is not multiple of 16, use padding
+		{
+			for (int j = k; j < 16; j++)
+			{
+				aes_buf[j] = 0; // pad w/ nulls
+			}
+		}
 		// encrypt the buffer
 		ret = mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, (const unsigned char *)aes_buf, encrypted + i);
 		if (ret != 0)
@@ -462,10 +413,11 @@ int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsi
 		unsigned int k = (in_len - i > 16) ? 16 : (unsigned int)(in_len - i); // number of bytes to be copied to the block buffer
 		memcpy(aes_buf, input + i, k);
 		// shouldn't happen if the encryption process is properly done on the sender
-		if (k != 16) {// number of bytes is not multiple of 16, use padding
+		if (k != 16)
+		{ // number of bytes is not multiple of 16, use padding
 			for (int j = k; j < 16; j++)
 			{
-				aes_buf[j] = '-'; // pad w/ stripline
+				aes_buf[j] = 0; // pad w/ nulls
 			}
 		}
 		// decrypt the buffer
@@ -474,7 +426,7 @@ int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsi
 		{
 			printError(ret);
 			return 1;
-		} 
+		}
 		dlen += 16;
 	}
 
