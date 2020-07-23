@@ -122,12 +122,14 @@ void generateKeyPair();
 #define STATE_DEF 0
 #define STATE_CHALLENGE 1
 #define STATE_VERIFICATION 2
-#define STATE_UNLOCK 3
-#define STATE_ALARM 4
-#define STATE_ERR 5
+#define STATE_PIN 3
+#define STATE_UNLOCK 4
+#define STATE_ALARM 5
+#define STATE_ERR 6
 
 unsigned int bt_state = STATE_DEF;
-const char *PASSWORD = "1998";
+const char* USER_ID = "1998";
+const char* USER_PIN = "1234";
 
 void fsm()
 {
@@ -149,7 +151,7 @@ void fsm()
 			Serial.println(")");
 			const char *header = "Pesan tak terenkripsi: ";
 			printBytes((const unsigned char *)outbuf, outbuf_len, header, strlen(header));
-			out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
+			SerialBT.write(outbuf, outbuf_len);
 		}
 
 		if ((inbuf_len = SerialBT.available()) > 0)
@@ -157,27 +159,27 @@ void fsm()
 			SerialBT.readBytes(inbuf, inbuf_len);
 			const char *header = "Pesan diterima: ";
 			printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
-			in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
 			// change state depending on user input
-			if (in_res != 0)
+			int no_mismatch = 1;
+			// check if user ID is registered
+			for (int i =  0; i < strlen(USER_ID) && no_mismatch; i++)
 			{
-				bt_state = STATE_ERR;
+				no_mismatch = (USER_ID[i] == inbuf[i]);
 			}
-			else
+			// if found, send ACK and go to next step
+			// TODO: Pick a special value for ACK and NACK
+			if (no_mismatch)
 			{
-				int no_mismatch = 1;
-				for (int i = 0; i < strlen(PASSWORD) && no_mismatch; i++)
-				{
-					no_mismatch = (PASSWORD[i] == decrypted[i]);
-				}
-
-				if (no_mismatch)
-				{
-					Serial.print("State: Challenge");
-					bt_state = STATE_CHALLENGE;
-				}
-				else
-					bt_state = STATE_DEF;
+				outbuf[0] = '1'; outbuf_len = 1; // ACK
+				SerialBT.write(outbuf, outbuf_len);
+				Serial.print("State: Challenge");
+				bt_state = STATE_CHALLENGE;
+			}
+			else // send NACK
+			{
+				outbuf[0] = '0'; outbuf_len = 1; // NACK
+				SerialBT.write(outbuf, outbuf_len);
+				bt_state = STATE_DEF;
 			}
 		}
 		break;
@@ -189,18 +191,9 @@ void fsm()
 		{
 			bt_state = STATE_ERR;
 		}
-		else
+		else // OK, send challenge w/o encryption
 		{
-			out_res = sendEncryptedMessage((const unsigned char *)outbuf, outbuf_len, PRINT_RESULT);
-			if (out_res != 0) // error
-			{
-				bt_state = STATE_ERR;
-			}
-			else
-			{
-				Serial.println("State: Verification");
-				bt_state = STATE_VERIFICATION;
-			}
+			SerialBT.write(outbuf, outbuf_len);
 		}
 		break;
 	}
@@ -216,23 +209,47 @@ void fsm()
 				bt_state = STATE_ERR;
 			else
 			{
-				// compare the received hash with the original hash from device
-				int no_mismatch = 1;
-				for (int i = 0; i < sizeof(checksum) && no_mismatch; i++)
+				// compare the decrypted response with user PIN
+				int no_mismatch = (dlen == sizeof(rnd_string)) // array length must be the same
+				for (int i = 0; i < sizeof(rnd_string) && no_mismatch; i++)
 				{
-					no_mismatch = (checksum[i] == decrypted[i]);
+					no_mismatch = (rnd_string[i] == decrypted[i]);
 				}
-
 				if (no_mismatch)
 				{
-					bt_state = STATE_UNLOCK;
-					Serial.println("State: Unlock");
+					bt_state = STATE_PIN;
+					Serial.println("State: PIN");
 				}
 				else
 					bt_state = STATE_ALARM;
 			}
 		}
 		break;
+	}
+	case STATE_PIN 
+	{
+		SerialBT.readBytes(inbuf, inbuf_len);
+		const char *header = "Pesan diterima: ";
+		printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
+		in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
+		if (in_res != 0)
+			bt_state = STATE_ERR;
+		else
+		{
+			// compare the decrypted response with the original challenge
+			int no_mismatch = (dlen == strlen(USER_PIN)) // array length must be the same
+			for (int i = 0; i < strlen(USER_PIN) && no_mismatch; i++)
+			{
+				no_mismatch = (USER_PIN[i] == decrypted[i]);
+			}
+			if (no_mismatch)
+			{
+				bt_state = STATE_UNLOCK;
+				Serial.println("State: PIN");
+			}
+			else
+				bt_state = STATE_ALARM;
+		}
 	}
 	case STATE_UNLOCK:
 	{
