@@ -80,10 +80,10 @@ static size_t elen = 0;
 static uint8_t decrypted[MBEDTLS_MPI_MAX_SIZE];
 static size_t dlen = 0;
 
-char outbuf[RSA_MAX_BYTES];
+char outbuf[MBEDTLS_MPI_MAX_SIZE];
 unsigned int outbuf_len;
 
-char inbuf[RSA_MAX_BYTES];
+char inbuf[MBEDTLS_MPI_MAX_SIZE];
 unsigned int inbuf_len;
 
 unsigned char checksum[SHA_256_BYTES];
@@ -151,7 +151,7 @@ void fsm()
 			Serial.println(")");
 			const char *header = "Pesan tak terenkripsi: ";
 			printBytes((const unsigned char *)outbuf, outbuf_len, header, strlen(header));
-			SerialBT.write(outbuf, outbuf_len);
+			SerialBT.write((unsigned char*) outbuf, outbuf_len);
 		}
 
 		if ((inbuf_len = SerialBT.available()) > 0)
@@ -171,14 +171,14 @@ void fsm()
 			if (no_mismatch)
 			{
 				outbuf[0] = '1'; outbuf_len = 1; // ACK
-				SerialBT.write(outbuf, outbuf_len);
+				SerialBT.write((unsigned char*) outbuf, outbuf_len);
 				Serial.print("State: Challenge");
 				bt_state = STATE_CHALLENGE;
 			}
 			else // send NACK
 			{
 				outbuf[0] = '0'; outbuf_len = 1; // NACK
-				SerialBT.write(outbuf, outbuf_len);
+				SerialBT.write((unsigned char*) outbuf, outbuf_len);
 				bt_state = STATE_DEF;
 			}
 		}
@@ -193,7 +193,7 @@ void fsm()
 		}
 		else // OK, send challenge w/o encryption
 		{
-			SerialBT.write(outbuf, outbuf_len);
+			SerialBT.write((unsigned char*) outbuf, outbuf_len);
 		}
 		break;
 	}
@@ -210,23 +210,29 @@ void fsm()
 			else
 			{
 				// compare the decrypted response with user PIN
-				int no_mismatch = (dlen == sizeof(rnd_string)) // array length must be the same
+				int no_mismatch = (dlen == sizeof(rnd_string)); // array length must be the same
 				for (int i = 0; i < sizeof(rnd_string) && no_mismatch; i++)
 				{
 					no_mismatch = (rnd_string[i] == decrypted[i]);
 				}
 				if (no_mismatch)
 				{
+					outbuf[0] = '1'; outbuf_len = 1; // NACK
+					SerialBT.write((unsigned char*) outbuf, outbuf_len);
 					bt_state = STATE_PIN;
 					Serial.println("State: PIN");
 				}
 				else
+				{
+					outbuf[0] = '0'; outbuf_len = 1; // NACK
+					SerialBT.write((unsigned char*) outbuf, outbuf_len);
 					bt_state = STATE_ALARM;
+				}
 			}
 		}
 		break;
 	}
-	case STATE_PIN 
+	case STATE_PIN:
 	{
 		SerialBT.readBytes(inbuf, inbuf_len);
 		const char *header = "Pesan diterima: ";
@@ -237,17 +243,21 @@ void fsm()
 		else
 		{
 			// compare the decrypted response with the original challenge
-			int no_mismatch = (dlen == strlen(USER_PIN)) // array length must be the same
+			int no_mismatch = (dlen == strlen(USER_PIN)); // array length must be the same
 			for (int i = 0; i < strlen(USER_PIN) && no_mismatch; i++)
 			{
 				no_mismatch = (USER_PIN[i] == decrypted[i]);
 			}
 			if (no_mismatch)
 			{
+				outbuf[0] = '1'; outbuf_len = 1; // ACK
+				SerialBT.write((unsigned char*) outbuf, outbuf_len);
 				bt_state = STATE_UNLOCK;
 				Serial.println("State: PIN");
 			}
 			else
+				outbuf[0] = '0'; outbuf_len = 1; // NACK
+				SerialBT.write((unsigned char*) outbuf, outbuf_len);
 				bt_state = STATE_ALARM;
 		}
 	}
