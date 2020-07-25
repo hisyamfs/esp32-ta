@@ -128,8 +128,8 @@ void generateKeyPair();
 #define STATE_ERR 6
 
 unsigned int bt_state = STATE_DEF;
-const char* USER_ID = "1998";
-const char* USER_PIN = "1234";
+const char *USER_ID = "1998";
+const char *USER_PIN = "1234";
 
 void fsm()
 {
@@ -151,18 +151,21 @@ void fsm()
 			Serial.println(")");
 			const char *header = "Pesan tak terenkripsi: ";
 			printBytes((const unsigned char *)outbuf, outbuf_len, header, strlen(header));
-			SerialBT.write((unsigned char*) outbuf, outbuf_len);
+			SerialBT.write((unsigned char *)outbuf, outbuf_len);
 		}
 
 		if ((inbuf_len = SerialBT.available()) > 0)
 		{
 			SerialBT.readBytes(inbuf, inbuf_len);
-			const char *header = "Pesan diterima: ";
-			printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
+			Serial.println("Pesan diterima : ");
+			Serial.write((const unsigned char *)inbuf, inbuf_len);
+			Serial.println();
+			printBytes((const unsigned char *)inbuf, inbuf_len, NULL, 0);
+			Serial.println();
 			// change state depending on user input
 			int no_mismatch = 1;
 			// check if user ID is registered
-			for (int i =  0; i < strlen(USER_ID) && no_mismatch; i++)
+			for (int i = 0; i < strlen(USER_ID) && no_mismatch; i++)
 			{
 				no_mismatch = (USER_ID[i] == inbuf[i]);
 			}
@@ -170,15 +173,17 @@ void fsm()
 			// TODO: Pick a special value for ACK and NACK
 			if (no_mismatch)
 			{
-				outbuf[0] = '1'; outbuf_len = 1; // ACK
-				SerialBT.write((unsigned char*) outbuf, outbuf_len);
+				outbuf[0] = '1';
+				outbuf_len = 1; // ACK
+				SerialBT.write((unsigned char *)outbuf, outbuf_len);
 				Serial.print("State: Challenge");
 				bt_state = STATE_CHALLENGE;
 			}
 			else // send NACK
 			{
-				outbuf[0] = '0'; outbuf_len = 1; // NACK
-				SerialBT.write((unsigned char*) outbuf, outbuf_len);
+				outbuf[0] = '0';
+				outbuf_len = 1; // NACK
+				SerialBT.write((unsigned char *)outbuf, outbuf_len);
 				bt_state = STATE_DEF;
 			}
 		}
@@ -193,7 +198,8 @@ void fsm()
 		}
 		else // OK, send challenge w/o encryption
 		{
-			SerialBT.write((unsigned char*) outbuf, outbuf_len);
+			SerialBT.write((unsigned char *)outbuf, outbuf_len);
+			bt_state = STATE_VERIFICATION;
 		}
 		break;
 	}
@@ -217,15 +223,17 @@ void fsm()
 				}
 				if (no_mismatch)
 				{
-					outbuf[0] = '1'; outbuf_len = 1; // NACK
-					SerialBT.write((unsigned char*) outbuf, outbuf_len);
+					outbuf[0] = '1';
+					outbuf_len = 1; // NACK
+					SerialBT.write((unsigned char *)outbuf, outbuf_len);
 					bt_state = STATE_PIN;
 					Serial.println("State: PIN");
 				}
 				else
 				{
-					outbuf[0] = '0'; outbuf_len = 1; // NACK
-					SerialBT.write((unsigned char*) outbuf, outbuf_len);
+					outbuf[0] = '0';
+					outbuf_len = 1; // NACK
+					SerialBT.write((unsigned char *)outbuf, outbuf_len);
 					bt_state = STATE_ALARM;
 				}
 			}
@@ -250,15 +258,17 @@ void fsm()
 			}
 			if (no_mismatch)
 			{
-				outbuf[0] = '1'; outbuf_len = 1; // ACK
-				SerialBT.write((unsigned char*) outbuf, outbuf_len);
+				outbuf[0] = '1';
+				outbuf_len = 1; // ACK
+				SerialBT.write((unsigned char *)outbuf, outbuf_len);
 				bt_state = STATE_UNLOCK;
 				Serial.println("State: PIN");
 			}
 			else
-				outbuf[0] = '0'; outbuf_len = 1; // NACK
-				SerialBT.write((unsigned char*) outbuf, outbuf_len);
-				bt_state = STATE_ALARM;
+				outbuf[0] = '0';
+			outbuf_len = 1; // NACK
+			SerialBT.write((unsigned char *)outbuf, outbuf_len);
+			bt_state = STATE_ALARM;
 		}
 	}
 	case STATE_UNLOCK:
