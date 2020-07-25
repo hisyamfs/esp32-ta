@@ -251,7 +251,7 @@ void fsm()
 		else
 		{
 			// compare the decrypted response with the original challenge
-			int no_mismatch = (dlen == strlen(USER_PIN)); // array length must be the same
+			int no_mismatch = (strlen((const char*) decrypted) == strlen(USER_PIN)); // array length must be the same
 			for (int i = 0; i < strlen(USER_PIN) && no_mismatch; i++)
 			{
 				no_mismatch = (USER_PIN[i] == decrypted[i]);
@@ -262,19 +262,26 @@ void fsm()
 				outbuf_len = 1; // ACK
 				SerialBT.write((unsigned char *)outbuf, outbuf_len);
 				bt_state = STATE_UNLOCK;
-				Serial.println("State: PIN");
+				Serial.println("State: UNLOCK");
 			}
 			else
+			{
 				outbuf[0] = '0';
-			outbuf_len = 1; // NACK
-			SerialBT.write((unsigned char *)outbuf, outbuf_len);
-			bt_state = STATE_ALARM;
+				outbuf_len = 1; // NACK
+				SerialBT.write((unsigned char *)outbuf, outbuf_len);
+				bt_state = STATE_ALARM;
+				Serial.println("State : ALARM");
+			}
 		}
+		break;
 	}
 	case STATE_UNLOCK:
 	{
 		Serial.println("!!!! DEVICE UNLOCKED !!!!");
 		Serial.println("Silahkan tunggu 1 detik...");
+		outbuf[0] = '1';
+		outbuf_len = 1; // ACK
+		SerialBT.write((unsigned char *)outbuf, outbuf_len);
 		delay(1000);
 		bt_state = STATE_DEF;
 		break;
