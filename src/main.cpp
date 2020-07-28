@@ -1,5 +1,6 @@
 #include "Arduino.h"
 #include "BluetoothSerial.h"
+#include "SPIFFS.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/cipher.h"
 #include "mbedtls/entropy.h"
@@ -129,7 +130,8 @@ void generateKeyPair();
 
 unsigned int bt_state = STATE_DEF;
 const char *USER_ID = "1998";
-const char *USER_PIN = "1234";
+char USER_PIN[128];
+unsigned int pin_len = 0;
 
 void fsm()
 {
@@ -251,8 +253,8 @@ void fsm()
 		else
 		{
 			// compare the decrypted response with the original challenge
-			int no_mismatch = (strlen((const char*) decrypted) == strlen(USER_PIN)); // array length must be the same
-			for (int i = 0; i < strlen(USER_PIN) && no_mismatch; i++)
+			int no_mismatch = (strlen((const char *)decrypted) == pin_len); // array length must be the same
+			for (int i = 0; i < pin_len && no_mismatch; i++)
 			{
 				no_mismatch = (USER_PIN[i] == decrypted[i]);
 			}
@@ -306,55 +308,11 @@ void fsm()
 
 void setup()
 {
-	int ret;
+	int ret = 0;
 	Serial.begin(115200);
+
 	Serial.println("Initializing...");
-
-	mbedtls_pk_init(&encrypt_pk);
-	mbedtls_entropy_init(&encrypt_entropy);
-	mbedtls_ctr_drbg_init(&encrypt_ctr_drbg);
-
-	mbedtls_pk_init(&decrypt_pk);
-	mbedtls_entropy_init(&decrypt_entropy);
-	mbedtls_ctr_drbg_init(&decrypt_ctr_drbg);
-
 	mbedtls_entropy_init(&gen_entropy);
-
-	Serial.println("Seeding encrypt_entropy function...");
-	ret = mbedtls_ctr_drbg_seed(&encrypt_ctr_drbg, mbedtls_entropy_func, &encrypt_entropy,
-								NULL, 0);
-	if (ret != 0)
-	{
-		// Randomizer error
-		printError(ret);
-		exit();
-	}
-
-	Serial.println("Seeding decrypt_entropy function...");
-	ret = mbedtls_ctr_drbg_seed(&decrypt_ctr_drbg, mbedtls_entropy_func, &decrypt_entropy,
-								NULL, 0);
-	if (ret != 0)
-	{
-		// Randomizer error
-		printError(ret);
-		exit();
-	}
-
-	Serial.println("Loading public RSA key...");
-	// Read the public key of user's phone
-	if ((ret = mbedtls_pk_parse_public_key(&encrypt_pk, hpPublicKey, sizeof(hpPublicKey))) != 0)
-	{
-		// public key error
-		printError(ret);
-		exit();
-	}
-	Serial.println("Loading RSA private key...");
-	if ((ret = mbedtls_pk_parse_key(&decrypt_pk, dPrivKey, sizeof(dPrivKey), NULL, 0)) != 0)
-	{
-		// public key error
-		printError(ret);
-		exit();
-	}
 
 	Serial.println("Initializing AES Encryption Cipher...");
 	mbedtls_aes_init(&aes);
@@ -374,7 +332,25 @@ void setup()
 	Serial.println("The device started, now you can pair it with bluetooth!");
 	outbuf[0] = '\0';
 	inbuf[0] = '\0';
-	// generateKeyPair();
+
+	if (!SPIFFS.begin(true))
+	{
+		Serial.println("An Error has occurred while mounting SPIFFS");
+		exit();
+	}
+	File file = SPIFFS.open("/userCredential.txt", FILE_READ);
+	if (!file) // Error, credential not found
+	{
+		Serial.println("Error loading user credential...");
+		exit();
+	}
+	// Cred loading OK
+	pin_len = file.available();
+	file.readBytes(USER_PIN, pin_len);
+	file.close();
+	Serial.println("Stored PIN: ");
+	Serial.write((const unsigned char*) USER_PIN, pin_len);
+	Serial.println();
 }
 
 void loop()
