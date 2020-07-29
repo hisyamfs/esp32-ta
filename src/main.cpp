@@ -104,13 +104,45 @@ mbedtls_ctr_drbg_context decrypt_ctr_drbg;
 mbedtls_entropy_context gen_entropy;
 
 mbedtls_aes_context aes;
-// mbedtls_cipher_context_t cipher_enc;
-// mbedtls_cipher_info_t *cipher_enc_info;
-
-// mbedtls_cipher_context_t cipher_dec;
-// mbedtls_cipher_info_t *cipher_dec_info;
 
 BluetoothSerial SerialBT;
+
+enum fsm_state
+{
+	STATE_ERR = 0,
+	STATE_DEF,
+	STATE_ID_CHECK,
+	STATE_CHALLENGE,
+	STATE_VERIFICATION,
+	STATE_PIN,
+	STATE_UNLOCK,
+	STATE_NEW_PIN,
+	STATE_ALARM
+};
+
+enum fsm_request
+{
+	REQUEST_NOTHING = '0',
+	REQUEST_UNLOCK,			// 1
+	REQUEST_CHANGE_PIN,		// 2
+	REQUEST_REGISTER_PHONE, // 3
+	REQUEST_REMOVE_PHONE,	// 4
+	REQUEST_DISABLE			//5
+};
+
+enum fsm_reply_request
+{
+	NACK = '0',
+	ACK
+};
+
+#define MY_AES_BLOCK_SIZE 16
+enum fsm_state bt_state = STATE_DEF;
+enum fsm_request user_request = REQUEST_NOTHING;
+enum fsm_reply_request bt_reply = NACK;
+const char *USER_ID = "1998";
+char USER_PIN[128];
+unsigned int pin_len = 0;
 
 int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
 int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result);
@@ -119,19 +151,7 @@ void exit();
 void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
 void printError(int errcode);
 void generateKeyPair();
-
-#define STATE_DEF 0
-#define STATE_CHALLENGE 1
-#define STATE_VERIFICATION 2
-#define STATE_PIN 3
-#define STATE_UNLOCK 4
-#define STATE_ALARM 5
-#define STATE_ERR 6
-
-unsigned int bt_state = STATE_DEF;
-const char *USER_ID = "1998";
-char USER_PIN[128];
-unsigned int pin_len = 0;
+void sendReply(fsm_reply_request reply);
 
 void fsm()
 {
@@ -164,28 +184,57 @@ void fsm()
 			Serial.println();
 			printBytes((const unsigned char *)inbuf, inbuf_len, NULL, 0);
 			Serial.println();
+			// Check if user send a request
+			unsigned int is_request = (inbuf[0] == '!');
+			if (is_request)
+			{
+				if (inbuf[1] <= (char) REQUEST_DISABLE && inbuf[1] >= (char) REQUEST_NOTHING)
+					user_request = (fsm_request) inbuf[1]; // !!
+				else
+					user_request = REQUEST_NOTHING;
+				sendReply(ACK);
+				Serial.println("State: ID Check");
+				bt_state = STATE_ID_CHECK;
+			}
+			else
+			{
+				sendReply(NACK);
+				bt_state = STATE_DEF;
+			}
+		}
+		break;
+	}
+	case STATE_ID_CHECK:
+	{
+		// TODO("Ubah agar loading user credential dilakukan di sini")
+		// TODO("Ubah agar user ID juga disimpan di SPIFFS")
+		if ((inbuf_len = SerialBT.available()) > 0)
+		{
+			SerialBT.readBytes(inbuf, inbuf_len);
+			Serial.println("Pesan diterima : ");
+			Serial.write((const unsigned char *)inbuf, inbuf_len);
+			Serial.println();
+			printBytes((const unsigned char *)inbuf, inbuf_len, NULL, 0);
+			Serial.println();
 			// change state depending on user input
-			int no_mismatch = 1;
+			int no_mismatch = (inbuf_len == strlen(USER_ID));
 			// check if user ID is registered
 			for (int i = 0; i < strlen(USER_ID) && no_mismatch; i++)
 			{
 				no_mismatch = (USER_ID[i] == inbuf[i]);
 			}
 			// if found, send ACK and go to next step
-			// TODO: Pick a special value for ACK and NACK
 			if (no_mismatch)
 			{
-				outbuf[0] = '1';
-				outbuf_len = 1; // ACK
-				SerialBT.write((unsigned char *)outbuf, outbuf_len);
-				Serial.print("State: Challenge");
+				sendReply(ACK);
+				Serial.println("State: Challenge");
 				bt_state = STATE_CHALLENGE;
 			}
 			else // send NACK
 			{
-				outbuf[0] = '0';
-				outbuf_len = 1; // NACK
-				SerialBT.write((unsigned char *)outbuf, outbuf_len);
+				sendReply(NACK);
+				Serial.println("User ID not found");
+				Serial.println("State: Default");
 				bt_state = STATE_DEF;
 			}
 		}
@@ -225,17 +274,13 @@ void fsm()
 				}
 				if (no_mismatch)
 				{
-					outbuf[0] = '1';
-					outbuf_len = 1; // NACK
-					SerialBT.write((unsigned char *)outbuf, outbuf_len);
+					sendReply(ACK);
 					bt_state = STATE_PIN;
 					Serial.println("State: PIN");
 				}
 				else
 				{
-					outbuf[0] = '0';
-					outbuf_len = 1; // NACK
-					SerialBT.write((unsigned char *)outbuf, outbuf_len);
+					sendReply(NACK);
 					bt_state = STATE_ALARM;
 				}
 			}
@@ -260,17 +305,31 @@ void fsm()
 			}
 			if (no_mismatch)
 			{
-				outbuf[0] = '1';
-				outbuf_len = 1; // ACK
-				SerialBT.write((unsigned char *)outbuf, outbuf_len);
-				bt_state = STATE_UNLOCK;
-				Serial.println("State: UNLOCK");
+				sendReply(ACK);
+				switch (user_request)
+				{
+				case REQUEST_UNLOCK:
+				{
+					bt_state = STATE_UNLOCK;
+					Serial.println("State: UNLOCK");
+					break;
+				}
+				case REQUEST_CHANGE_PIN:
+				{
+					bt_state = STATE_NEW_PIN;
+					Serial.println("State: NEW PIN");
+					break;
+				}
+				default:
+				{
+					Serial.println("State: DEFAULT");
+					bt_state = STATE_DEF;
+				}
+				}
 			}
 			else
 			{
-				outbuf[0] = '0';
-				outbuf_len = 1; // NACK
-				SerialBT.write((unsigned char *)outbuf, outbuf_len);
+				sendReply(NACK);
 				bt_state = STATE_ALARM;
 				Serial.println("State : ALARM");
 			}
@@ -281,17 +340,54 @@ void fsm()
 	{
 		Serial.println("!!!! DEVICE UNLOCKED !!!!");
 		Serial.println("Silahkan tunggu 1 detik...");
-		outbuf[0] = '1';
-		outbuf_len = 1; // ACK
-		SerialBT.write((unsigned char *)outbuf, outbuf_len);
 		delay(1000);
+		sendReply(ACK);
 		bt_state = STATE_DEF;
+		break;
+	}
+	case STATE_NEW_PIN:
+	{
+		SerialBT.readBytes(inbuf, inbuf_len);
+		const char *header = "Pesan diterima: ";
+		printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
+		in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
+		if (in_res != 0)
+			bt_state = STATE_ERR;
+		else
+		{
+			// load the new pin to SPIFFS
+			File file = SPIFFS.open("/userPin.txt", FILE_WRITE);
+			unsigned int new_pin_len = strlen((const char*)decrypted);
+			if (!file)
+			{
+				Serial.println("Gagal mengubah PIN, silakan coba lagi.");
+				sendReply(NACK);
+			}
+			else if (new_pin_len <= MY_AES_BLOCK_SIZE)
+			{
+				Serial.println("Berhasil mengubah PIN");
+				sendReply(ACK);
+				file.write(decrypted, new_pin_len);
+				memcpy(USER_PIN, decrypted, new_pin_len);
+			}
+			else
+			{
+				Serial.println("PIN terlalu panjang, harus kurang dari 16 karakter.");
+				sendReply(NACK);
+			}
+			
+			file.close();
+			Serial.println("State : DEFAULT");
+			bt_state = STATE_DEF;
+		}
 		break;
 	}
 	case STATE_ALARM:
 	{
 		Serial.println("!!!! ALARM ON !!!!");
 		delay(1000);
+		sendReply(ACK);
+		Serial.println("State : DEFAULT");
 		bt_state = STATE_DEF;
 		break;
 	}
@@ -338,7 +434,7 @@ void setup()
 		Serial.println("An Error has occurred while mounting SPIFFS");
 		exit();
 	}
-	File file = SPIFFS.open("/userCredential.txt", FILE_READ);
+	File file = SPIFFS.open("/userPin.txt", FILE_READ);
 	if (!file) // Error, credential not found
 	{
 		Serial.println("Error loading user credential...");
@@ -349,7 +445,7 @@ void setup()
 	file.readBytes(USER_PIN, pin_len);
 	file.close();
 	Serial.println("Stored PIN: ");
-	Serial.write((const unsigned char*) USER_PIN, pin_len);
+	Serial.write((const unsigned char *)USER_PIN, pin_len);
 	Serial.println();
 }
 
@@ -598,4 +694,11 @@ void generateKeyPair()
 	mbedtls_rsa_free(rsa);
 	mbedtls_ctr_drbg_free(&gk_ctr_drbg);
 	mbedtls_entropy_free(&gk_entropy);
+}
+
+void sendReply(fsm_reply_request reply)
+{
+	outbuf[0] = (char)reply;
+	outbuf_len = 1;
+	SerialBT.write((unsigned char *)outbuf, outbuf_len);
 }
