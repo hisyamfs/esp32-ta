@@ -188,8 +188,8 @@ void fsm()
 			unsigned int is_request = (inbuf[0] == '!');
 			if (is_request)
 			{
-				if (inbuf[1] <= (char) REQUEST_DISABLE && inbuf[1] >= (char) REQUEST_NOTHING)
-					user_request = (fsm_request) inbuf[1]; // !!
+				if (inbuf[1] <= (char)REQUEST_DISABLE && inbuf[1] >= (char)REQUEST_NOTHING)
+					user_request = (fsm_request)inbuf[1]; // !!
 				else
 					user_request = REQUEST_NOTHING;
 				sendReply(ACK);
@@ -289,49 +289,52 @@ void fsm()
 	}
 	case STATE_PIN:
 	{
-		SerialBT.readBytes(inbuf, inbuf_len);
-		const char *header = "Pesan diterima: ";
-		printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
-		in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
-		if (in_res != 0)
-			bt_state = STATE_ERR;
-		else
+		if ((inbuf_len = SerialBT.available()) > 0)
 		{
-			// compare the decrypted response with the original challenge
-			int no_mismatch = (strlen((const char *)decrypted) == pin_len); // array length must be the same
-			for (int i = 0; i < pin_len && no_mismatch; i++)
-			{
-				no_mismatch = (USER_PIN[i] == decrypted[i]);
-			}
-			if (no_mismatch)
-			{
-				sendReply(ACK);
-				switch (user_request)
-				{
-				case REQUEST_UNLOCK:
-				{
-					bt_state = STATE_UNLOCK;
-					Serial.println("State: UNLOCK");
-					break;
-				}
-				case REQUEST_CHANGE_PIN:
-				{
-					bt_state = STATE_NEW_PIN;
-					Serial.println("State: NEW PIN");
-					break;
-				}
-				default:
-				{
-					Serial.println("State: DEFAULT");
-					bt_state = STATE_DEF;
-				}
-				}
-			}
+			SerialBT.readBytes(inbuf, inbuf_len);
+			const char *header = "Pesan diterima: ";
+			printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
+			in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
+			if (in_res != 0)
+				bt_state = STATE_ERR;
 			else
 			{
-				sendReply(NACK);
-				bt_state = STATE_ALARM;
-				Serial.println("State : ALARM");
+				// compare the decrypted response with the original challenge
+				int no_mismatch = (strlen((const char *)decrypted) == pin_len); // array length must be the same
+				for (int i = 0; i < pin_len && no_mismatch; i++)
+				{
+					no_mismatch = (USER_PIN[i] == decrypted[i]);
+				}
+				if (no_mismatch)
+				{
+					sendReply(ACK);
+					switch (user_request)
+					{
+					case REQUEST_UNLOCK:
+					{
+						bt_state = STATE_UNLOCK;
+						Serial.println("State: UNLOCK");
+						break;
+					}
+					case REQUEST_CHANGE_PIN:
+					{
+						bt_state = STATE_NEW_PIN;
+						Serial.println("State: NEW PIN");
+						break;
+					}
+					default:
+					{
+						Serial.println("State: DEFAULT");
+						bt_state = STATE_DEF;
+					}
+					}
+				}
+				else
+				{
+					sendReply(NACK);
+					bt_state = STATE_ALARM;
+					Serial.println("State : ALARM");
+				}
 			}
 		}
 		break;
@@ -347,38 +350,41 @@ void fsm()
 	}
 	case STATE_NEW_PIN:
 	{
-		SerialBT.readBytes(inbuf, inbuf_len);
-		const char *header = "Pesan diterima: ";
-		printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
-		in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
-		if (in_res != 0)
-			bt_state = STATE_ERR;
-		else
+		if ((inbuf_len = SerialBT.available()) > 0)
 		{
-			// load the new pin to SPIFFS
-			File file = SPIFFS.open("/userPin.txt", FILE_WRITE);
-			unsigned int new_pin_len = strlen((const char*)decrypted);
-			if (!file)
-			{
-				Serial.println("Gagal mengubah PIN, silakan coba lagi.");
-				sendReply(NACK);
-			}
-			else if (new_pin_len <= MY_AES_BLOCK_SIZE)
-			{
-				Serial.println("Berhasil mengubah PIN");
-				sendReply(ACK);
-				file.write(decrypted, new_pin_len);
-				memcpy(USER_PIN, decrypted, new_pin_len);
-			}
+			SerialBT.readBytes(inbuf, inbuf_len);
+			const char *header = "Pesan diterima: ";
+			printBytes((const unsigned char *)inbuf, inbuf_len, header, strlen(header));
+			in_res = decryptReceivedMessage((const unsigned char *)inbuf, inbuf_len, PRINT_RESULT);
+			if (in_res != 0)
+				bt_state = STATE_ERR;
 			else
 			{
-				Serial.println("PIN terlalu panjang, harus kurang dari 16 karakter.");
-				sendReply(NACK);
+				// load the new pin to SPIFFS
+				File file = SPIFFS.open("/userPin.txt", FILE_WRITE);
+				unsigned int new_pin_len = strlen((const char *)decrypted);
+				if (!file)
+				{
+					Serial.println("Gagal mengubah PIN, silakan coba lagi.");
+					sendReply(NACK);
+				}
+				else if (new_pin_len <= MY_AES_BLOCK_SIZE)
+				{
+					Serial.println("Berhasil mengubah PIN");
+					sendReply(ACK);
+					file.write(decrypted, new_pin_len);
+					memcpy(USER_PIN, decrypted, new_pin_len);
+				}
+				else
+				{
+					Serial.println("PIN terlalu panjang, harus kurang dari 16 karakter.");
+					sendReply(NACK);
+				}
+
+				file.close();
+				Serial.println("State : DEFAULT");
+				bt_state = STATE_DEF;
 			}
-			
-			file.close();
-			Serial.println("State : DEFAULT");
-			bt_state = STATE_DEF;
 		}
 		break;
 	}
