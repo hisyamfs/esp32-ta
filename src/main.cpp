@@ -117,7 +117,9 @@ enum fsm_state
 	STATE_PIN,
 	STATE_UNLOCK,
 	STATE_NEW_PIN,
-	STATE_ALARM
+	STATE_ALARM,
+	STATE_KEY_EXCHANGE,
+	STATE_REGISTER
 };
 
 enum fsm_request
@@ -193,8 +195,16 @@ void fsm()
 				else
 					user_request = REQUEST_NOTHING;
 				sendReply(ACK);
-				Serial.println("State: ID Check");
-				bt_state = STATE_ID_CHECK;
+				if (user_request == REQUEST_REGISTER_PHONE)
+				{
+					Serial.println("State: KEY EXCHANGE");
+					bt_state = STATE_KEY_EXCHANGE;
+				}
+				else
+				{
+					Serial.println("State: ID Check");
+					bt_state = STATE_ID_CHECK;
+				}
 			}
 			else
 			{
@@ -316,6 +326,7 @@ void fsm()
 						Serial.println("State: UNLOCK");
 						break;
 					}
+					case REQUEST_REGISTER_PHONE:
 					case REQUEST_CHANGE_PIN:
 					{
 						bt_state = STATE_NEW_PIN;
@@ -382,8 +393,17 @@ void fsm()
 				}
 
 				file.close();
-				Serial.println("State : DEFAULT");
-				bt_state = STATE_DEF;
+
+				if (user_request == REQUEST_REGISTER_PHONE)
+				{
+					Serial.println("State: REGISTER");
+					bt_state = STATE_REGISTER;
+				}
+				else
+				{
+					Serial.println("State : DEFAULT");
+					bt_state = STATE_DEF;
+				}
 			}
 		}
 		break;
@@ -401,6 +421,37 @@ void fsm()
 	{
 		Serial.println("ERROR!! : Silahkan restart device anda.");
 		exit();
+		break;
+	}
+	case STATE_KEY_EXCHANGE:
+	{
+		if ((inbuf_len = SerialBT.available()) > 0)
+		{
+			SerialBT.readBytes(inbuf, inbuf_len);
+			Serial.println("Pesan diterima: ");
+			Serial.write((const unsigned char *)inbuf, inbuf_len);
+
+			// TODO("Lakukan generasi public key secara benar")
+			char *dpk = "Public Key Device";
+			outbuf_len = strlen(dpk);
+			memcpy(outbuf, dpk, outbuf_len);
+			SerialBT.write((const unsigned char *)outbuf, outbuf_len);
+
+			// TODO("Lakukan generasi shared secret sebagai kunci enkripsi AES")
+			// TODO("Cek apakah kunci dapat digunakan")
+			// Jika berhasil, ACK, else, NACK
+			sendReply(ACK);
+			Serial.println("State: PIN");
+			bt_state = STATE_PIN;
+		}
+		break;
+	}
+	case STATE_REGISTER:
+	{
+		// TODO("Lakukan penyimpanan kunci enkripsi pada memori ESP32")
+		Serial.println("HP berhasil didaftarkan.");
+		sendReply(ACK);
+		bt_state = STATE_DEF;
 		break;
 	}
 	default:
