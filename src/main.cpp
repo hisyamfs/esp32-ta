@@ -18,6 +18,7 @@
 #define USE_SHA_256 0
 #define SHA_256_BYTES 32
 #define RSA_MAX_BYTES 256
+#define MY_AES_BLOCK_SIZE 16 // AES-128
 
 // 2048-bit RSA key pairs
 static uint8_t hpPublicKey[] =
@@ -74,6 +75,7 @@ static uint8_t dPrivKey[] =
 
 const char symkey[] =
 	"abcdefghijklmnop";
+static uint8_t newkey[MY_AES_BLOCK_SIZE];
 
 static uint8_t encrypted[MBEDTLS_MPI_MAX_SIZE];
 static size_t elen = 0;
@@ -138,7 +140,6 @@ enum fsm_reply_request
 	ACK
 };
 
-#define MY_AES_BLOCK_SIZE 16
 enum fsm_state bt_state = STATE_DEF;
 enum fsm_request user_request = REQUEST_NOTHING;
 enum fsm_reply_request bt_reply = NACK;
@@ -149,6 +150,7 @@ unsigned int pin_len = 0;
 int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
 int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result);
 int generateChallenge();
+int generateNewAES128Key();
 void exit();
 void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
 void printError(int errcode);
@@ -431,18 +433,41 @@ void fsm()
 			Serial.println("Pesan diterima: ");
 			Serial.write((const unsigned char *)inbuf, inbuf_len);
 
-			// TODO("Lakukan generasi public key secara benar")
-			char *dpk = "Public Key Device";
-			outbuf_len = strlen(dpk);
-			memcpy(outbuf, dpk, outbuf_len);
-			SerialBT.write((const unsigned char *)outbuf, outbuf_len);
-
-			// TODO("Lakukan generasi shared secret sebagai kunci enkripsi AES")
+			// TODO("Lakukan pengecekan dan loading public key HP")
 			// TODO("Cek apakah kunci dapat digunakan")
 			// Jika berhasil, ACK, else, NACK
-			sendReply(ACK);
-			Serial.println("State: PIN");
-			bt_state = STATE_PIN;
+			int key_res = generateNewAES128Key();
+			if (key_res != 0)
+			{
+				sendReply(NACK);
+				Serial.println("State: ERROR");
+				bt_state = STATE_ERR;
+			}
+			else
+			{
+				// Load decrypt cipher dengan kunci baru
+				mbedtls_aes_free(&aes);
+				mbedtls_aes_init(&aes);
+				int kx_ret = 0;
+				if ((kx_ret = mbedtls_aes_setkey_dec(&aes,
+													 (const unsigned char *)newkey,
+													 MY_AES_BLOCK_SIZE * 8)) != 0)
+				{
+					printError(kx_ret);
+					sendReply(NACK);
+					Serial.println("State: ERROR");
+					bt_state = STATE_ERR;
+				}
+				else
+				{
+					// Berhasil, ACK
+					SerialBT.write((const uint8_t *)newkey, sizeof(newkey));
+					delay(10);
+					sendReply(ACK);
+					Serial.println("State: PIN");
+					bt_state = STATE_PIN;
+				}
+			}
 		}
 		break;
 	}
@@ -512,6 +537,8 @@ void loop()
 	delay(20);
 }
 
+// TODO("Ganti agar fungsi entropi menjadi variable lokal")
+// TODO("Ganti agar menggunakan CTR-DRBG")
 int generateChallenge()
 {
 	// generate 16-chars random string
@@ -529,10 +556,27 @@ int generateChallenge()
 		// print rnd string
 		const char *header = "Random string: ";
 		printBytes(rnd_string, sizeof(rnd_string), header, strlen(header));
-		// compute the hash of rnd string and print it
-		mbedtls_sha256(rnd_string, sizeof(rnd_string), checksum, USE_SHA_256);
-		const char *hash_header = "Hash dari random string: ";
-		printBytes(checksum, sizeof(checksum), hash_header, strlen(hash_header));
+		return 0;
+	}
+}
+
+// TODO("Ganti menjadi menggunakan CTR-DRBG")
+int generateNewAES128Key()
+{
+	mbedtls_entropy_context key_gen_entropy;
+	mbedtls_entropy_init(&key_gen_entropy);
+	// generate 16-chars random string
+	int res = mbedtls_entropy_func(&key_gen_entropy, newkey, sizeof(newkey));
+	if (res != 0) // Error
+	{
+		printError(res);
+		return 1;
+	}
+	else // Random string generation successful
+	{
+		// print new key
+		const char *header = "New Generated AES-128 Key: ";
+		printBytes(newkey, sizeof(newkey), header, strlen(header));
 		return 0;
 	}
 }
