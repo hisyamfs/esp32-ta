@@ -148,6 +148,7 @@ char USER_PIN[128];
 unsigned int pin_len = 0;
 
 int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
+int sendRSAEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
 int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result);
 int generateChallenge();
 int generateNewAES128Key();
@@ -430,8 +431,11 @@ void fsm()
 		if ((inbuf_len = SerialBT.available()) > 0)
 		{
 			SerialBT.readBytes(inbuf, inbuf_len);
-			Serial.println("Pesan diterima: ");
-			Serial.write((const unsigned char *)inbuf, inbuf_len);
+			memcpy(keybuf, inbuf, inbuf_len);
+			keylen = inbuf_len + 1;
+			keybuf[keylen] = '\0';
+			Serial.println("PK diterima: ");
+			Serial.write((const unsigned char *)keybuf, keylen);
 
 			// TODO("Lakukan pengecekan dan loading public key HP")
 			// TODO("Cek apakah kunci dapat digunakan")
@@ -445,27 +449,68 @@ void fsm()
 			}
 			else
 			{
-				// Load decrypt cipher dengan kunci baru
-				mbedtls_aes_free(&aes);
-				mbedtls_aes_init(&aes);
-				int kx_ret = 0;
-				if ((kx_ret = mbedtls_aes_setkey_dec(&aes,
-													 (const unsigned char *)newkey,
-													 MY_AES_BLOCK_SIZE * 8)) != 0)
+				// Load public key hp
+				mbedtls_pk_free(&encrypt_pk);
+				mbedtls_entropy_free(&encrypt_entropy);
+				mbedtls_ctr_drbg_free(&encrypt_ctr_drbg);
+
+				mbedtls_pk_init(&encrypt_pk);
+				mbedtls_entropy_init(&encrypt_entropy);
+				mbedtls_ctr_drbg_init(&encrypt_ctr_drbg);
+
+				int ret;
+				if ((ret = mbedtls_ctr_drbg_seed(&encrypt_ctr_drbg, mbedtls_entropy_func,
+												 &encrypt_entropy, NULL, 0)) != 0)
 				{
-					printError(kx_ret);
+					// public key error
+					printError(ret);
 					sendReply(NACK);
-					Serial.println("State: ERROR");
-					bt_state = STATE_ERR;
+					Serial.println("State: DEF");
+					bt_state = STATE_DEF;
+				}
+				else if ((ret = mbedtls_pk_parse_public_key(&encrypt_pk, (const unsigned char *)keybuf, keylen)) != 0)
+				{
+					// public key error
+					printError(ret);
+					sendReply(NACK);
+					Serial.println("State: DEF");
+					bt_state = STATE_DEF;
 				}
 				else
 				{
-					// Berhasil, ACK
-					SerialBT.write((const uint8_t *)newkey, sizeof(newkey));
-					delay(10);
-					sendReply(ACK);
-					Serial.println("State: PIN");
-					bt_state = STATE_PIN;
+					// Load decrypt cipher dengan kunci baru
+					mbedtls_aes_free(&aes);
+					mbedtls_aes_init(&aes);
+					int kx_ret = 0;
+					if ((kx_ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char *)newkey, MY_AES_BLOCK_SIZE * 8)) != 0)
+					{
+						printError(kx_ret);
+						mbedtls_aes_free(&aes);
+						mbedtls_aes_init(&aes);
+						kx_ret =
+							mbedtls_aes_setkey_dec(&aes, (const unsigned char *)symkey, MY_AES_BLOCK_SIZE * 8);
+						sendReply(NACK);
+						Serial.println("State: ERROR");
+						bt_state = STATE_ERR;
+					}
+					else if ((kx_ret = sendRSAEncryptedMessage(newkey, sizeof(newkey), PRINT_RESULT)) != 0)
+					{
+						mbedtls_aes_free(&aes);
+						mbedtls_aes_init(&aes);
+						kx_ret =
+							mbedtls_aes_setkey_dec(&aes, (const unsigned char *)symkey, MY_AES_BLOCK_SIZE * 8);
+						delay(10);
+						sendReply(NACK);
+						Serial.println("State: DEF");
+						bt_state = STATE_DEF;
+					}
+					else
+					{
+						delay(10);
+						sendReply(ACK);
+						Serial.println("State: PIN");
+						bt_state = STATE_PIN;
+					}
 				}
 			}
 		}
@@ -616,6 +661,29 @@ int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigne
 	}
 	SerialBT.write(encrypted, elen);
 	return 0;
+}
+
+int sendRSAEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result)
+{
+	// Encrypt
+	int ret;
+	if ((ret = mbedtls_pk_encrypt(&encrypt_pk, message, len,
+								  encrypted, &elen, sizeof(encrypted),
+								  mbedtls_ctr_drbg_random, &encrypt_ctr_drbg)) != 0)
+	{
+		printError(ret);
+		return 1;
+	}
+	else // encrypt ok
+	{
+		if (print_result == PRINT_RESULT)
+		{
+			const char *header = "Mengirim: ";
+			printBytes(encrypted, elen, header, strlen(header));
+		}
+		SerialBT.write(encrypted, elen);
+		return 0;
+	}
 }
 
 int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result)
