@@ -142,7 +142,8 @@ enum fsm_reply_request
 enum fsm_state bt_state = STATE_DEF;
 enum fsm_request user_request = REQUEST_NOTHING;
 enum fsm_reply_request bt_reply = NACK;
-const char *USER_ID = "1998";
+char USER_ID[MBEDTLS_MPI_MAX_SIZE];
+unsigned int id_len = 0;
 char USER_PIN[128];
 unsigned int pin_len = 0;
 
@@ -171,6 +172,7 @@ void setup()
 		Serial.println("An Error has occurred while mounting SPIFFS");
 		exit();
 	}
+	
 	File file = SPIFFS.open("/userPin.txt", FILE_READ);
 	if (!file) // Error, credential not found
 	{
@@ -188,10 +190,23 @@ void setup()
 		Serial.println("Error loading user credential...");
 		exit();
 	}
-
 	int key_len = file.available();
-	file.readBytes((char*) symkey, key_len);
+	file.readBytes((char *)symkey, key_len);
 	file.close();
+
+	file = SPIFFS.open("/userId.txt", FILE_READ);
+	if (!file) // Error, credential not found
+	{
+		Serial.println("Error loading user credential...");
+		exit();
+	}
+	id_len = file.available();
+	file.readBytes(USER_ID, id_len);
+	file.close();
+
+	Serial.println("Stored ID: ");
+	Serial.write((const unsigned char *)USER_ID, id_len);
+	Serial.println();
 
 	Serial.println("Stored PIN: ");
 	Serial.write((const unsigned char *)USER_PIN, pin_len);
@@ -300,9 +315,9 @@ void fsm()
 			printBytes((const unsigned char *)inbuf, inbuf_len, NULL, 0);
 			Serial.println();
 			// change state depending on user input
-			int no_mismatch = (inbuf_len == strlen(USER_ID));
+			int no_mismatch = (inbuf_len == id_len);
 			// check if user ID is registered
-			for (int i = 0; i < strlen(USER_ID) && no_mismatch; i++)
+			for (int i = 0; i < id_len && no_mismatch; i++)
 			{
 				no_mismatch = (USER_ID[i] == inbuf[i]);
 			}
@@ -588,23 +603,33 @@ void fsm()
 	}
 	case STATE_REGISTER:
 	{
-		// TODO("Lakukan penyimpanan kunci enkripsi pada memori ESP32")
-		// load the new pin to SPIFFS
-		File file = SPIFFS.open("/userKey.txt", FILE_WRITE);
-		if (!file)
+		if ((inbuf_len = SerialBT.available()) > 0)
 		{
-			Serial.println("Gagal mendaftarkan HP, silakan coba lagi.");
-			sendReply(NACK);
+			SerialBT.readBytes(inbuf, inbuf_len);
+			Serial.println("User Id : ");
+			Serial.write((const unsigned char *)inbuf, inbuf_len);
+			// TODO("Lakukan penyimpanan kunci enkripsi pada memori ESP32")
+			// Simpan user Id dan kunci enkripsi terbaru pada File System
+			File file = SPIFFS.open("/userKey.txt", FILE_WRITE);
+			File id_file = SPIFFS.open("/userId.txt", FILE_WRITE);
+			if (!file || !id_file)
+			{
+				Serial.println("Gagal mendaftarkan HP, silakan coba lagi.");
+				sendReply(NACK);
+			}
+			else
+			{
+				file.write(newkey, sizeof(newkey));
+				id_file.write((const unsigned char *)inbuf, inbuf_len);
+				Serial.println("HP berhasil didaftarkan.");
+				sendReply(ACK);
+				memcpy(symkey, newkey, MY_AES_BLOCK_SIZE);
+				memcpy(USER_ID, inbuf, inbuf_len);
+			}
+			file.close();
+			id_file.close();
+			bt_state = STATE_DEF;
 		}
-		else
-		{
-			Serial.println("HP berhasil didaftarkan.");
-			sendReply(ACK);
-			file.write(newkey, sizeof(newkey));
-			memcpy(symkey, newkey, MY_AES_BLOCK_SIZE);
-		}
-		file.close();
-		bt_state = STATE_DEF;
 		break;
 	}
 	default:
