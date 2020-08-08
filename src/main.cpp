@@ -73,8 +73,7 @@ static uint8_t dPrivKey[] =
 	"CCW6eRGCFtEwWJZcsMDSEb4dOQ==\n"
 	"-----END PRIVATE KEY-----\n";
 
-const char symkey[] =
-	"abcdefghijklmnop";
+static uint8_t symkey[MY_AES_BLOCK_SIZE];
 static uint8_t newkey[MY_AES_BLOCK_SIZE];
 
 static uint8_t encrypted[MBEDTLS_MPI_MAX_SIZE];
@@ -147,6 +146,7 @@ const char *USER_ID = "1998";
 char USER_PIN[128];
 unsigned int pin_len = 0;
 
+void fsm();
 int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
 int sendRSAEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
 int decryptReceivedMessage(const unsigned char *input, unsigned int in_len, unsigned int print_result);
@@ -157,6 +157,76 @@ void printBytes(const unsigned char *byte_arr, unsigned int len, const char *hea
 void printError(int errcode);
 void generateKeyPair();
 void sendReply(fsm_reply_request reply);
+
+void setup()
+{
+	int ret = 0;
+	Serial.begin(115200);
+
+	Serial.println("Initializing...");
+	mbedtls_entropy_init(&gen_entropy);
+
+	if (!SPIFFS.begin(true))
+	{
+		Serial.println("An Error has occurred while mounting SPIFFS");
+		exit();
+	}
+	File file = SPIFFS.open("/userPin.txt", FILE_READ);
+	if (!file) // Error, credential not found
+	{
+		Serial.println("Error loading user credential...");
+		exit();
+	}
+	// Cred loading OK
+	pin_len = file.available();
+	file.readBytes(USER_PIN, pin_len);
+	file.close();
+
+	file = SPIFFS.open("/userKey.txt", FILE_READ);
+	if (!file) // Error, credential not found
+	{
+		Serial.println("Error loading user credential...");
+		exit();
+	}
+
+	int key_len = file.available();
+	file.readBytes((char*) symkey, key_len);
+	file.close();
+
+	Serial.println("Stored PIN: ");
+	Serial.write((const unsigned char *)USER_PIN, pin_len);
+	Serial.println();
+
+	Serial.println("Stored Key: ");
+	Serial.write((const unsigned char *)symkey, MY_AES_BLOCK_SIZE);
+	printBytes((const unsigned char *)symkey, MY_AES_BLOCK_SIZE, NULL, 0);
+	Serial.println();
+
+	Serial.println("Initializing AES Encryption Cipher...");
+	mbedtls_aes_init(&aes);
+	if ((ret = mbedtls_aes_setkey_enc(&aes, (const unsigned char *)symkey, MY_AES_BLOCK_SIZE * 8)) != 0)
+	{
+		printError(ret);
+		exit();
+	}
+	if ((ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char *)symkey, MY_AES_BLOCK_SIZE * 8)) != 0)
+	{
+		printError(ret);
+		exit();
+	}
+
+	bt_state = STATE_DEF;
+	SerialBT.begin("ESP32test"); //Bluetooth device name
+	Serial.println("The device started, now you can pair it with bluetooth!");
+	outbuf[0] = '\0';
+	inbuf[0] = '\0';
+}
+
+void loop()
+{
+	fsm();
+	delay(20);
+}
 
 void fsm()
 {
@@ -519,67 +589,27 @@ void fsm()
 	case STATE_REGISTER:
 	{
 		// TODO("Lakukan penyimpanan kunci enkripsi pada memori ESP32")
-		Serial.println("HP berhasil didaftarkan.");
-		sendReply(ACK);
+		// load the new pin to SPIFFS
+		File file = SPIFFS.open("/userKey.txt", FILE_WRITE);
+		if (!file)
+		{
+			Serial.println("Gagal mendaftarkan HP, silakan coba lagi.");
+			sendReply(NACK);
+		}
+		else
+		{
+			Serial.println("HP berhasil didaftarkan.");
+			sendReply(ACK);
+			file.write(newkey, sizeof(newkey));
+			memcpy(symkey, newkey, MY_AES_BLOCK_SIZE);
+		}
+		file.close();
 		bt_state = STATE_DEF;
 		break;
 	}
 	default:
 		bt_state = STATE_DEF;
 	}
-}
-
-void setup()
-{
-	int ret = 0;
-	Serial.begin(115200);
-
-	Serial.println("Initializing...");
-	mbedtls_entropy_init(&gen_entropy);
-
-	Serial.println("Initializing AES Encryption Cipher...");
-	mbedtls_aes_init(&aes);
-	if ((ret = mbedtls_aes_setkey_enc(&aes, (const unsigned char *)symkey, strlen(symkey) * 8)) != 0)
-	{
-		printError(ret);
-		exit();
-	}
-	if ((ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char *)symkey, strlen(symkey) * 8)) != 0)
-	{
-		printError(ret);
-		exit();
-	}
-
-	bt_state = STATE_DEF;
-	SerialBT.begin("ESP32test"); //Bluetooth device name
-	Serial.println("The device started, now you can pair it with bluetooth!");
-	outbuf[0] = '\0';
-	inbuf[0] = '\0';
-
-	if (!SPIFFS.begin(true))
-	{
-		Serial.println("An Error has occurred while mounting SPIFFS");
-		exit();
-	}
-	File file = SPIFFS.open("/userPin.txt", FILE_READ);
-	if (!file) // Error, credential not found
-	{
-		Serial.println("Error loading user credential...");
-		exit();
-	}
-	// Cred loading OK
-	pin_len = file.available();
-	file.readBytes(USER_PIN, pin_len);
-	file.close();
-	Serial.println("Stored PIN: ");
-	Serial.write((const unsigned char *)USER_PIN, pin_len);
-	Serial.println();
-}
-
-void loop()
-{
-	fsm();
-	delay(20);
 }
 
 // TODO("Ganti agar fungsi entropi menjadi variable lokal")
