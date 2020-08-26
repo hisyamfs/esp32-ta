@@ -13,6 +13,7 @@
 #error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
 #endif
 
+#define LED 2
 #define PRINT_RESULT 1
 #define NO_PRINT 0
 #define USE_SHA_256 0
@@ -130,7 +131,7 @@ enum fsm_request
 	REQUEST_CHANGE_PIN,		// 2
 	REQUEST_REGISTER_PHONE, // 3
 	REQUEST_REMOVE_PHONE,	// 4
-	REQUEST_DISABLE			//5
+	REQUEST_DISABLE			// 5
 };
 
 enum fsm_reply_request
@@ -159,6 +160,27 @@ void printError(int errcode);
 void generateKeyPair();
 void sendReply(fsm_reply_request reply);
 
+int isMesinMati()
+{
+	delay(3000);
+	return 1;
+}
+
+void disableImmobilizer()
+{
+	digitalWrite(LED, HIGH);
+}
+
+void enableImmobilizer()
+{
+	digitalWrite(LED, LOW);
+}
+
+void setupImmobilizer()
+{
+	pinMode(LED, OUTPUT);
+}
+
 void setup()
 {
 	int ret = 0;
@@ -172,7 +194,7 @@ void setup()
 		Serial.println("An Error has occurred while mounting SPIFFS");
 		exit();
 	}
-	
+
 	File file = SPIFFS.open("/userPin.txt", FILE_READ);
 	if (!file) // Error, credential not found
 	{
@@ -229,6 +251,9 @@ void setup()
 		printError(ret);
 		exit();
 	}
+
+	setupImmobilizer();
+	enableImmobilizer();
 
 	bt_state = STATE_DEF;
 	SerialBT.begin("ESP32test"); //Bluetooth device name
@@ -410,8 +435,10 @@ void fsm()
 					{
 					case REQUEST_UNLOCK:
 					{
+						disableImmobilizer();
 						bt_state = STATE_UNLOCK;
 						Serial.println("State: UNLOCK");
+						Serial.println("!!!! DEVICE UNLOCKED !!!!");
 						break;
 					}
 					case REQUEST_REGISTER_PHONE:
@@ -440,11 +467,14 @@ void fsm()
 	}
 	case STATE_UNLOCK:
 	{
-		Serial.println("!!!! DEVICE UNLOCKED !!!!");
-		Serial.println("Silahkan tunggu 1 detik...");
-		delay(1000);
-		sendReply(ACK);
-		bt_state = STATE_DEF;
+		if (isMesinMati())
+		{
+			// Serial.println("Silahkan tunggu 1 detik...");
+			// delay(1000);
+			enableImmobilizer();
+			sendReply(ACK);
+			bt_state = STATE_DEF;
+		}
 		break;
 	}
 	case STATE_NEW_PIN:
@@ -608,7 +638,7 @@ void fsm()
 			SerialBT.readBytes(inbuf, inbuf_len);
 			Serial.println("User Id : ");
 			Serial.write((const unsigned char *)inbuf, inbuf_len);
-			// TODO("Lakukan penyimpanan kunci enkripsi pada memori ESP32")
+			// TODO("Lakukan penyimpanan kunci enkripsi pada memori ESP32 secara terenkripsi")
 			// Simpan user Id dan kunci enkripsi terbaru pada File System
 			File file = SPIFFS.open("/userKey.txt", FILE_WRITE);
 			File id_file = SPIFFS.open("/userId.txt", FILE_WRITE);
@@ -619,12 +649,15 @@ void fsm()
 			}
 			else
 			{
-				file.write(newkey, sizeof(newkey));
-				id_file.write((const unsigned char *)inbuf, inbuf_len);
-				Serial.println("HP berhasil didaftarkan.");
-				sendReply(ACK);
 				memcpy(symkey, newkey, MY_AES_BLOCK_SIZE);
 				memcpy(USER_ID, inbuf, inbuf_len);
+				id_len = inbuf_len;
+
+				file.write(newkey, sizeof(newkey));
+				id_file.write((const unsigned char *)USER_ID, id_len);
+
+				Serial.println("HP berhasil didaftarkan.");
+				sendReply(ACK);
 			}
 			file.close();
 			id_file.close();
