@@ -63,6 +63,7 @@ int checkUserIDImp(bt_buffer *id);
 int checkUserPINImp(bt_buffer *pin);
 int decryptBTImp(bt_buffer *ciphertext, bt_buffer *msg);
 int storePINImp(bt_buffer *pin);
+int soundAlarmImp();
 void setImmobilizerImp(int enable);
 int checkEngineOffImp();
 void exit();
@@ -70,6 +71,20 @@ void exit();
 void setupImmobilizer();
 void enableImmobilizer();
 void disableImmobilizer();
+
+/* State table, holds the pointer to each state implementation */
+void (*btFsm_state_table[])() =
+	{
+		state_err,
+		state_def,
+		state_id_check,
+		state_challenge,
+		state_verification,
+		state_pin,
+		state_unlock,
+		state_new_pin,
+		state_alarm,
+		state_register};
 
 void setup()
 {
@@ -154,6 +169,7 @@ void setup()
 		checkUserPINImp,
 		decryptBTImp,
 		storePINImp,
+		soundAlarmImp,
 		setImmobilizerImp,
 		checkEngineOffImp,
 		exit);
@@ -168,7 +184,7 @@ void setup()
 
 void loop()
 {
-	state_table[current_state]();
+	btFsm_state_table[current_state]();
 	delay(20);
 }
 
@@ -369,6 +385,12 @@ int storePINImp(bt_buffer *pin)
 		return BT_FAIL;
 	}
 	file.close();
+}
+
+int soundAlarmImp()
+{
+	delay(3000);
+	return BT_SUCCESS;
 }
 
 void setImmobilizerImp(int enable)

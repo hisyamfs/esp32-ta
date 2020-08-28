@@ -29,20 +29,6 @@ void state_new_pin();
 void state_alarm();
 void state_register();
 
-/* State table, holds the pointer to each state implementation */
-void(*state_table[]) () =
-    {
-        state_err,
-        state_def,
-        state_id_check,
-        state_challenge,
-        state_verification,
-        state_pin,
-        state_unlock,
-        state_new_pin,
-        state_alarm,
-        state_register};
-
 /* Holds the current and next state */
 static fsm_state current_state;
 
@@ -115,6 +101,9 @@ static int (*decryptBT)(bt_buffer *ciphertext, bt_buffer *message);
 // store the new pin on device memory. returns BT_SUCCESS on success.
 static int (*storePIN)(bt_buffer *pin);
 
+// sounds the alarm
+static int (*soundAlarm)();
+
 // Turns immobilizer on or off
 static void (*setImmobilizer)(int enable);
 
@@ -143,6 +132,7 @@ void init_btFsm(
     int (*checkUserPINImp)(bt_buffer *),
     int (*decryptBTImp)(bt_buffer *, bt_buffer *),
     int (*storePINImp)(bt_buffer *),
+    int (*soundAlarmImp)(),
     void (*setImmobilizerImp)(int),
     int (*checkEngineOffImp)(),
     void (*handleErrorImp)());

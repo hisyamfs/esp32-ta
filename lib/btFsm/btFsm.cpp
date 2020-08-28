@@ -11,6 +11,7 @@ void init_btFsm(
     int (*checkUserPINImp)(bt_buffer *),
     int (*decryptBTImp)(bt_buffer *, bt_buffer *),
     int (*storePINImp)(bt_buffer *),
+    int (*soundAlarmImp)(),
     void (*setImmobilizerImp)(int),
     int (*checkEngineOffImp)(),
     void (*handleErrorImp)())
@@ -18,7 +19,7 @@ void init_btFsm(
     init_bt_buffer(&inbuf);
     init_bt_buffer(&outbuf);
     init_bt_buffer(&nonce);
-    init_bt_buffer(&user_request);
+    user_request = REQUEST_NOTHING;
 
     announceState = announceStateImp;
     readBTInput = readBTInputImp;
@@ -30,6 +31,7 @@ void init_btFsm(
     checkUserPIN = checkUserPINImp;
     decryptBT = decryptBTImp;
     storePIN = storePINImp;
+    soundAlarm = soundAlarmImp;
     setImmobilizer = setImmobilizerImp;
     checkEngineOff = checkEngineOffImp;
     handleError = handleErrorImp;
