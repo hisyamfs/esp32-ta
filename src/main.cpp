@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "btFsm.h"
+// #include "btFsm.h"
 #include "BluetoothSerial.h"
 #include "SPIFFS.h"
 #include "mbedtls/pk.h"
@@ -25,17 +25,6 @@
 const int DEBUG_MODE = 1;
 
 static uint8_t symkey[MY_AES_BLOCK_SIZE];
-static uint8_t newkey[MY_AES_BLOCK_SIZE];
-
-mbedtls_pk_context encrypt_pk;
-mbedtls_entropy_context encrypt_entropy;
-mbedtls_ctr_drbg_context encrypt_ctr_drbg;
-
-mbedtls_pk_context decrypt_pk;
-mbedtls_entropy_context decrypt_entropy;
-mbedtls_ctr_drbg_context decrypt_ctr_drbg;
-
-mbedtls_entropy_context gen_entropy;
 
 mbedtls_aes_context aes;
 
@@ -46,12 +35,127 @@ unsigned int id_len = 0;
 char USER_PIN[128];
 unsigned int pin_len = 0;
 
-int sendEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
-int sendRSAEncryptedMessage(const unsigned char *message, unsigned int len, unsigned int print_result);
-void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
-void printError(int errcode);
-void generateKeyPair();
-int generateNewAES128Key();
+/* State enum declaration, to enforce correctness */
+typedef enum
+{
+	STATE_ERR = 0,
+	STATE_DEF,
+	STATE_ID_CHECK,
+	STATE_CHALLENGE,
+	STATE_VERIFICATION,
+	STATE_PIN,
+	STATE_UNLOCK,
+	STATE_NEW_PIN,
+	STATE_ALARM,
+	STATE_KEY_EXCHANGE,
+	STATE_REGISTER
+} fsm_state;
+
+/* State function, implements each state */
+void state_err();
+void state_def();
+void state_id_check();
+void state_challenge();
+void state_verification();
+void state_pin();
+void state_unlock();
+void state_new_pin();
+void state_alarm();
+void state_register();
+
+/* Holds the current and next state */
+static fsm_state current_state;
+
+/** Helper functions, variables, and constants **/
+#define BT_BUF_LEN_BYTE 32
+#define BT_BUF_LEN_BIT 256
+#define BT_BLOCK_SIZE_BYTE 16
+#define BT_BLOCK_SIZE_BIT 128
+#define BT_SUCCESS 0
+#define BT_FAIL 1
+#define BT_ENABLE 1
+#define BT_DISABLE 0
+
+typedef struct BTBuffer
+{
+	unsigned char data[BT_BUF_LEN_BYTE];
+	unsigned int len;
+} bt_buffer;
+
+typedef enum BTReply
+{
+	NACK = '0',
+	ACK = '1',
+	ERR = '2'
+} bt_reply;
+
+typedef enum BTRequest
+{
+	REQUEST_NOTHING = '0',
+	REQUEST_UNLOCK,			// 1
+	REQUEST_CHANGE_PIN,		// 2
+	REQUEST_REGISTER_PHONE, // 3
+	REQUEST_REMOVE_PHONE,	// 4
+	REQUEST_DISABLE			// 5
+} bt_request;
+
+/* Initialize bt_buffer structure */
+void init_bt_buffer(bt_buffer *buffer);
+
+/* Check if two buffer store the same data */
+int compareBT(bt_buffer buf1, bt_buffer buf2);
+
+/* Parse user request from a buffer*/
+bt_request parse_request(bt_buffer *buffer);
+
+void init_btFsm();
+
+/* Input & Output Buffer for FSM */
+static bt_buffer inbuf, outbuf, nonce;
+static bt_request user_request;
+
+/* FSM events handler */
+static void (*announceState)(fsm_state next_state); // for debugging purpose
+
+// read incoming data, returns how many bytes are incoming, returns
+// non-0 if there are incoming data
+static int (*readBTInput)(bt_buffer *inbuf);
+
+// read serial monitor, and load it into output buffer, returns non-0
+// if there are incoming data. For debugging purposes.
+static int (*readSInput)(bt_buffer *outbuf);
+
+// generate a random 16 character string
+static int (*generateNonce)(bt_buffer *nonce);
+
+// send device reply: ACK, NACK, and ERR, downstream
+static int (*sendReply)(bt_reply status);
+
+// send data held in output buffer. returns BT_SUCCESS on succesful transfer
+static int (*writeBT)(bt_buffer *outbuf);
+
+// check user id based on a buffer data. returns BT_SUCCESS if found.
+static int (*checkUserID)(bt_buffer *id);
+
+// check user pin based on a buffer value. returns BT_SUCCESS if it matches.
+static int (*checkUserPIN)(bt_buffer *pin);
+
+// decrypt a ciphertext. Returns BT_SUCCESS on succesful decryption
+static int (*decryptBT)(bt_buffer *ciphertext, bt_buffer *message);
+
+// store the new pin on device memory. returns BT_SUCCESS on success.
+static int (*storePIN)(bt_buffer *pin);
+
+// sounds the alarm
+static int (*soundAlarm)();
+
+// Turns immobilizer on or off
+static void (*setImmobilizer)(int enable);
+
+// Checks if the driver switched the engine off
+static int (*checkEngineOff)();
+
+static void (*handleError)();
 
 void announceStateImp(fsm_state state);
 int readBTInputImp(bt_buffer *inbuf);
@@ -71,6 +175,9 @@ void exit();
 void setupImmobilizer();
 void enableImmobilizer();
 void disableImmobilizer();
+
+void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
+void printError(int errcode);
 
 /* State table, holds the pointer to each state implementation */
 void (*btFsm_state_table[])() =
@@ -92,7 +199,6 @@ void setup()
 	Serial.begin(115200);
 
 	Serial.println("Initializing...");
-	mbedtls_entropy_init(&gen_entropy);
 
 	if (!SPIFFS.begin(true))
 	{
@@ -109,6 +215,7 @@ void setup()
 	// Cred loading OK
 	pin_len = file.available();
 	file.readBytes(USER_PIN, pin_len);
+	pin_len = strlen((const char*) USER_PIN);
 	file.close();
 
 	file = SPIFFS.open("/userKey.txt", FILE_READ);
@@ -158,21 +265,22 @@ void setup()
 	}
 
 	Serial.println("Initializing state machine....");
-	init_btFsm(
-		announceStateImp,
-		readBTInputImp,
-		readSInputImp,
-		generateNonceImp,
-		sendReplyImp,
-		writeBTImp,
-		checkUserIDImp,
-		checkUserPINImp,
-		decryptBTImp,
-		storePINImp,
-		soundAlarmImp,
-		setImmobilizerImp,
-		checkEngineOffImp,
-		exit);
+	init_btFsm();
+
+	announceState = announceStateImp;
+	readBTInput = readBTInputImp;
+	readSInput = readSInputImp;
+	generateNonce = generateNonceImp;
+	sendReply = sendReplyImp;
+	writeBT = writeBTImp;
+	checkUserID = checkUserIDImp;
+	checkUserPIN = checkUserPINImp;
+	decryptBT = decryptBTImp;
+	storePIN = storePINImp;
+	soundAlarm = soundAlarmImp;
+	setImmobilizer = setImmobilizerImp;
+	checkEngineOff = checkEngineOffImp;
+	handleError = exit;
 
 	Serial.println("Initializing immobilizer....");
 	setupImmobilizer();
@@ -184,8 +292,13 @@ void setup()
 
 void loop()
 {
+	// int lc = 0;
+	// for (lc = 0; lc < 50; lc++)
+	// {
 	btFsm_state_table[current_state]();
 	delay(20);
+	// }
+	// Serial.println("loop");
 }
 
 void announceStateImp(fsm_state state)
@@ -239,6 +352,13 @@ int readBTInputImp(bt_buffer *inbuf)
 			incoming = BT_BUF_LEN_BYTE; // clamp inbuf length
 		inbuf->len = incoming;
 		SerialBT.readBytes(inbuf->data, inbuf->len);
+		if (DEBUG_MODE)
+		{
+			Serial.println("HP: ");
+			Serial.write(inbuf->data, inbuf->len);
+			Serial.println();
+			printBytes(inbuf->data, inbuf->len, NULL, 0);
+		}
 		return inbuf->len;
 	}
 	else // No incoming data
@@ -254,6 +374,13 @@ int readSInputImp(bt_buffer *outbuf)
 			incoming = BT_BUF_LEN_BYTE; // clamp inbuf length
 		outbuf->len = incoming;
 		Serial.readBytes(outbuf->data, outbuf->len);
+		if (DEBUG_MODE)
+		{
+			Serial.println("ESP32: ");
+			Serial.write(outbuf->data, outbuf->len);
+			Serial.println();
+			printBytes(outbuf->data, outbuf->len, NULL, 0);
+		}
 		return outbuf->len;
 	}
 	else // No incoming data
@@ -266,7 +393,8 @@ int generateNonceImp(bt_buffer *nonce)
 	mbedtls_entropy_context key_gen_entropy;
 	mbedtls_entropy_init(&key_gen_entropy);
 	// generate 16-chars random string
-	int res = mbedtls_entropy_func(&key_gen_entropy, nonce->data, BT_BLOCK_SIZE_BYTE);
+	unsigned char nonce_buf[BT_BLOCK_SIZE_BYTE];
+	int res = mbedtls_entropy_func(&key_gen_entropy, nonce_buf, BT_BLOCK_SIZE_BYTE);
 	if (res != 0) // Error
 	{
 		printError(res);
@@ -274,10 +402,12 @@ int generateNonceImp(bt_buffer *nonce)
 	}
 	else // Random string generation successful
 	{
-		// print new key
-		const char *header = "New Generated AES-128 Key: ";
+		// fill the nonce with the generated string
+		memcpy(nonce->data, nonce_buf, BT_BLOCK_SIZE_BYTE);
+		nonce->len = BT_BLOCK_SIZE_BYTE;
+		const char *header = "Nonce: ";
 		printBytes(nonce->data, nonce->len, header, strlen(header));
-		return 0;
+		return BT_SUCCESS;
 	}
 }
 
@@ -287,13 +417,19 @@ int sendReplyImp(bt_reply status)
 	init_bt_buffer(&repl);
 	repl.len = 1;
 	repl.data[0] = (unsigned char)status;
-	SerialBT.write(repl.data, repl.len);
-	return BT_SUCCESS;
+	return writeBTImp(&repl);
 }
 
 int writeBTImp(bt_buffer *outbuf)
 {
 	SerialBT.write(outbuf->data, outbuf->len);
+	if (DEBUG_MODE)
+	{
+		Serial.println("ESP32: ");
+		Serial.write(outbuf->data, outbuf->len);
+		Serial.println();
+		printBytes(outbuf->data, outbuf->len, NULL, 0);
+	}
 	return BT_SUCCESS;
 }
 
@@ -312,7 +448,7 @@ int checkUserIDImp(bt_buffer *id)
 
 int checkUserPINImp(bt_buffer *pin)
 {
-	int no_mismatch = (pin->len == pin_len);
+	int no_mismatch = (strlen((const char*) pin->data) == pin_len);
 	for (int i = 0; i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
 	{
 		no_mismatch = (pin->data[i] == USER_PIN[i]);
@@ -352,7 +488,7 @@ int decryptBTImp(bt_buffer *ciphertext, bt_buffer *msg)
 		}
 		msg->len += 16;
 	}
-
+	// msg->len = strlen((const char*) msg->data);
 	if (DEBUG_MODE)
 	{
 		Serial.println("Pesan terdekripsi:");
@@ -366,7 +502,7 @@ int storePINImp(bt_buffer *pin)
 {
 	// load the new pin to SPIFFS
 	File file = SPIFFS.open("/userPin.txt", FILE_WRITE);
-	unsigned int new_pin_len = pin->len;
+	unsigned int new_pin_len = strlen((const char*) pin->data);
 	if (!file)
 	{
 		Serial.println("Gagal mengubah PIN, silakan coba lagi.");
@@ -375,8 +511,15 @@ int storePINImp(bt_buffer *pin)
 	else if (new_pin_len <= BT_BLOCK_SIZE_BYTE)
 	{
 		Serial.println("Berhasil mengubah PIN");
-		file.write(pin->data, new_pin_len);
 		memcpy(USER_PIN, pin->data, new_pin_len);
+		pin_len = new_pin_len;
+		file.write((const uint8_t*) USER_PIN, pin_len);
+		if (DEBUG_MODE)
+		{
+			Serial.print("PIN Baru : "); Serial.println(pin_len);
+			Serial.write((const uint8_t*) USER_PIN, pin_len);
+			Serial.println();
+		}
 		return BT_SUCCESS;
 	}
 	else
@@ -409,12 +552,6 @@ int checkEngineOffImp()
 
 void exit()
 {
-	mbedtls_pk_free(&encrypt_pk);
-	mbedtls_ctr_drbg_free(&encrypt_ctr_drbg);
-	mbedtls_entropy_free(&encrypt_entropy);
-	mbedtls_pk_free(&decrypt_pk);
-	mbedtls_ctr_drbg_free(&decrypt_ctr_drbg);
-	mbedtls_entropy_free(&decrypt_entropy);
 	mbedtls_aes_free(&aes);
 
 	while (true)
@@ -563,23 +700,249 @@ void setupImmobilizer()
 	pinMode(LED, OUTPUT);
 }
 
-// TODO("Ganti menjadi menggunakan CTR-DRBG")
-int generateNewAES128Key()
+// FSM
+void init_btFsm()
 {
-	mbedtls_entropy_context key_gen_entropy;
-	mbedtls_entropy_init(&key_gen_entropy);
-	// generate 16-chars random string
-	int res = mbedtls_entropy_func(&key_gen_entropy, newkey, sizeof(newkey));
-	if (res != 0) // Error
+	init_bt_buffer(&inbuf);
+	init_bt_buffer(&outbuf);
+	init_bt_buffer(&nonce);
+	user_request = REQUEST_NOTHING;
+	current_state = STATE_DEF;
+}
+
+void state_err()
+{
+	handleError();
+}
+
+void state_def()
+{
+	if (readBTInput(&inbuf))
 	{
-		printError(res);
-		return 1;
+		user_request = parse_request(&inbuf);
+		switch (user_request)
+		{
+		case REQUEST_UNLOCK:
+		case REQUEST_CHANGE_PIN:
+		case REQUEST_REMOVE_PHONE:
+		{
+			sendReply(ACK);
+			fsm_state next_state = STATE_ID_CHECK;
+			announceState(next_state);
+			current_state = next_state;
+			break;
+		}
+		default: // REQUEST_NOTHING and other unimplemented feature (e.g. register)
+		{
+			sendReply(NACK);
+			fsm_state next_state = STATE_DEF;
+			announceState(next_state);
+			current_state = next_state;
+			break;
+		}
+		}
 	}
-	else // Random string generation successful
+	if (readSInput(&outbuf))
 	{
-		// print new key
-		const char *header = "New Generated AES-128 Key: ";
-		printBytes(newkey, sizeof(newkey), header, strlen(header));
-		return 0;
+		writeBT(&outbuf);
 	}
+}
+
+void state_id_check()
+{
+	if (readBTInput(&inbuf))
+	{
+		if (checkUserID(&inbuf) == BT_SUCCESS)
+		{
+			sendReply(ACK);
+			announceState(STATE_CHALLENGE);
+			current_state = STATE_CHALLENGE;
+		}
+		else
+		{
+			sendReply(NACK);
+			announceState(STATE_DEF);
+			current_state = STATE_DEF;
+		}
+	}
+}
+
+void state_challenge()
+{
+	if (generateNonce(&nonce) == BT_SUCCESS)
+	{
+		writeBT(&nonce);
+		current_state = STATE_VERIFICATION;
+		announceState(current_state);
+	}
+	else // Fail to generate nonce, error
+	{
+		sendReply(NACK);
+		announceState(STATE_ERR);
+		current_state = STATE_ERR;
+	}
+}
+
+void state_verification()
+{
+	if (readBTInput(&inbuf))
+	{
+		bt_buffer response;
+		init_bt_buffer(&response);
+		if (decryptBT(&inbuf, &response) == BT_SUCCESS)
+		{
+			// compare the response with the nonce
+			if (compareBT(nonce, response) == BT_SUCCESS)
+			{
+				sendReply(ACK);
+				announceState(STATE_PIN);
+				current_state = STATE_PIN;
+			}
+			else
+			{
+				sendReply(NACK);
+				announceState(STATE_ALARM);
+				current_state = STATE_ALARM;
+			}
+		}
+		else
+		{
+			sendReply(ERR);
+			announceState(STATE_ERR);
+			current_state = STATE_ERR;
+		}
+	}
+}
+
+void state_pin()
+{
+	if (readBTInput(&inbuf))
+	{
+		bt_buffer pin;
+		init_bt_buffer(&pin);
+		if (decryptBT(&inbuf, &pin) == BT_SUCCESS)
+		{
+			// compare the response with the nonce
+			if (checkUserPIN(&pin) == BT_SUCCESS)
+			{
+				sendReply(ACK);
+				fsm_state next_state = STATE_DEF;
+				switch (user_request)
+				{
+				case REQUEST_UNLOCK:
+				{
+					setImmobilizer(BT_DISABLE);
+					next_state = STATE_UNLOCK;
+					break;
+				}
+				case REQUEST_CHANGE_PIN:
+					next_state = STATE_NEW_PIN;
+					break;
+				default:
+					next_state = STATE_DEF;
+				}
+				announceState(next_state);
+				current_state = next_state;
+			}
+			else
+			{
+				sendReply(NACK);
+				announceState(STATE_ALARM);
+				current_state = STATE_ALARM;
+			}
+		}
+		else
+		{
+			sendReply(ERR);
+			announceState(STATE_ERR);
+			current_state = STATE_ERR;
+		}
+	}
+}
+
+void state_unlock()
+{
+	if (checkEngineOff() == BT_SUCCESS)
+	{
+		setImmobilizer(BT_ENABLE);
+		sendReply(ACK);
+		announceState(STATE_DEF);
+		current_state = STATE_DEF;
+	}
+}
+
+void state_new_pin()
+{
+	if (readBTInput(&inbuf))
+	{
+		bt_buffer pin;
+		init_bt_buffer(&pin);
+		if (decryptBT(&inbuf, &pin) == BT_SUCCESS)
+		{
+			if (storePIN(&pin) == BT_SUCCESS)
+				sendReply(ACK);
+			else
+				sendReply(NACK);
+			announceState(STATE_DEF);
+			current_state = STATE_DEF;
+		}
+		else
+		{
+			sendReply(ERR);
+			announceState(STATE_ERR);
+			current_state = STATE_ERR;
+		}
+	}
+}
+
+void state_alarm()
+{
+	if (soundAlarm() == BT_SUCCESS)
+	{
+		sendReply(ACK);
+		announceState(STATE_DEF);
+		current_state = STATE_DEF;
+	}
+}
+
+void state_register()
+{
+	// TODO("Implement the state")
+}
+
+/* Initialize bt_buffer structure */
+void init_bt_buffer(bt_buffer *buffer)
+{
+	buffer->len = 0;
+	for (int i = 0; i < BT_BLOCK_SIZE_BYTE; i++)
+	{
+		buffer->data[i] = 0;
+	}
+}
+
+/* Check if two buffer store the same data */
+int compareBT(bt_buffer buf1, bt_buffer buf2)
+{
+	int no_mismatch = (buf1.len == buf2.len);
+	for (int i = 0; i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
+	{
+		no_mismatch = (buf1.data[i] == buf2.data[i]);
+	}
+	if (no_mismatch)
+		return BT_SUCCESS;
+	else
+		return BT_FAIL;
+}
+
+/* Parse user request from a buffer */
+bt_request parse_request(bt_buffer *buffer)
+{
+	int is_req = (buffer->data[0] == '!'); // Request begin with an exclamation mark, e.g. '!1'
+	if (!is_req)
+		return REQUEST_NOTHING;
+	else if (buffer->data[1] <= (char)REQUEST_DISABLE &&
+			 buffer->data[1] >= (char)REQUEST_NOTHING)
+		return (bt_request)buffer->data[1];
+	else
+		return REQUEST_NOTHING;
 }

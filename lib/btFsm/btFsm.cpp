@@ -1,5 +1,52 @@
 #include "btFsm.h"
 
+/* Input & Output Buffer for FSM */
+static bt_buffer inbuf, outbuf, nonce;
+static bt_request user_request;
+
+/* FSM events handler */
+static void (*announceState)(fsm_state next_state); // for debugging purpose
+
+// read incoming data, returns how many bytes are incoming, returns
+// non-0 if there are incoming data
+static int (*readBTInput)(bt_buffer *inbuf);
+
+// read serial monitor, and load it into output buffer, returns non-0
+// if there are incoming data. For debugging purposes.
+static int (*readSInput)(bt_buffer *outbuf);
+
+// generate a random 16 character string
+static int (*generateNonce)(bt_buffer *nonce);
+
+// send device reply: ACK, NACK, and ERR, downstream
+static int (*sendReply)(bt_reply status);
+
+// send data held in output buffer. returns BT_SUCCESS on succesful transfer
+static int (*writeBT)(bt_buffer *outbuf);
+
+// check user id based on a buffer data. returns BT_SUCCESS if found.
+static int (*checkUserID)(bt_buffer *id);
+
+// check user pin based on a buffer value. returns BT_SUCCESS if it matches.
+static int (*checkUserPIN)(bt_buffer *pin);
+
+// decrypt a ciphertext. Returns BT_SUCCESS on succesful decryption
+static int (*decryptBT)(bt_buffer *ciphertext, bt_buffer *message);
+
+// store the new pin on device memory. returns BT_SUCCESS on success.
+static int (*storePIN)(bt_buffer *pin);
+
+// sounds the alarm
+static int (*soundAlarm)();
+
+// Turns immobilizer on or off
+static void (*setImmobilizer)(int enable);
+
+// Checks if the driver switched the engine off
+static int (*checkEngineOff)();
+
+static void (*handleError)();
+
 void init_btFsm(
     void (*announceStateImp)(fsm_state),
     int (*readBTInputImp)(bt_buffer *),
