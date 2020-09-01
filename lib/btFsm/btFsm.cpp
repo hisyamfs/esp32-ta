@@ -4,50 +4,77 @@
 static bt_buffer inbuf, outbuf, nonce;
 static bt_request user_request;
 
+/* State table, holds the pointer to each state implementation */
+void (*btFsm_state_table[])() =
+    {
+        state_err,
+        state_def,
+        state_id_check,
+        state_challenge,
+        state_verification,
+        state_pin,
+        state_unlock,
+        state_new_pin,
+        state_alarm,
+        state_register};
+
+/* Holds the current and next state */
+static fsm_state current_state;
+
 /* FSM events handler */
-static void (*announceState)(fsm_state next_state); // for debugging purpose
+static void (*announceState)(fsm_state next_state) = nullptr; // for debugging purpose
 
 // read incoming data, returns how many bytes are incoming, returns
 // non-0 if there are incoming data
-static int (*readBTInput)(bt_buffer *inbuf);
+static int (*readBTInput)(bt_buffer *inbuf) = nullptr;
 
 // read serial monitor, and load it into output buffer, returns non-0
 // if there are incoming data. For debugging purposes.
-static int (*readSInput)(bt_buffer *outbuf);
+static int (*readSInput)(bt_buffer *outbuf) = nullptr;
 
 // generate a random 16 character string
-static int (*generateNonce)(bt_buffer *nonce);
+static int (*generateNonce)(bt_buffer *nonce) = nullptr;
 
 // send device reply: ACK, NACK, and ERR, downstream
-static int (*sendReply)(bt_reply status);
+static int (*sendReply)(bt_reply status) = nullptr;
 
 // send data held in output buffer. returns BT_SUCCESS on succesful transfer
-static int (*writeBT)(bt_buffer *outbuf);
+static int (*writeBT)(bt_buffer *outbuf) = nullptr;
 
 // check user id based on a buffer data. returns BT_SUCCESS if found.
-static int (*checkUserID)(bt_buffer *id);
+static int (*checkUserID)(bt_buffer *id) = nullptr;
 
 // check user pin based on a buffer value. returns BT_SUCCESS if it matches.
-static int (*checkUserPIN)(bt_buffer *pin);
+static int (*checkUserPIN)(bt_buffer *pin) = nullptr;
 
 // decrypt a ciphertext. Returns BT_SUCCESS on succesful decryption
-static int (*decryptBT)(bt_buffer *ciphertext, bt_buffer *message);
+static int (*decryptBT)(bt_buffer *ciphertext, bt_buffer *message) = nullptr;
 
 // store the new pin on device memory. returns BT_SUCCESS on success.
-static int (*storePIN)(bt_buffer *pin);
+static int (*storePIN)(bt_buffer *pin) = nullptr;
 
 // sounds the alarm
-static int (*soundAlarm)();
+static int (*soundAlarm)() = nullptr;
 
 // Turns immobilizer on or off
-static void (*setImmobilizer)(int enable);
+static void (*setImmobilizer)(int enable) = nullptr;
 
 // Checks if the driver switched the engine off
-static int (*checkEngineOff)();
+static int (*checkEngineOff)() = nullptr;
 
-static void (*handleError)();
+static void (*handleError)() = nullptr;
 
-void init_btFsm(
+fsm_state get_current_state()
+{
+    return current_state;
+}
+
+void run_btFsm()
+{
+    btFsm_state_table[current_state]();
+}
+
+int init_btFsm(
     void (*announceStateImp)(fsm_state),
     int (*readBTInputImp)(bt_buffer *),
     int (*readSInputImp)(bt_buffer *),
@@ -67,23 +94,65 @@ void init_btFsm(
     init_bt_buffer(&outbuf);
     init_bt_buffer(&nonce);
     user_request = REQUEST_NOTHING;
+    current_state = STATE_DEF;
 
     announceState = announceStateImp;
-    readBTInput = readBTInputImp;
-    readSInput = readSInputImp;
-    generateNonce = generateNonceImp;
-    sendReply = sendReplyImp;
-    writeBT = writeBTImp;
-    checkUserID = checkUserIDImp;
-    checkUserPIN = checkUserPINImp;
-    decryptBT = decryptBTImp;
-    storePIN = storePINImp;
-    soundAlarm = soundAlarmImp;
-    setImmobilizer = setImmobilizerImp;
-    checkEngineOff = checkEngineOffImp;
-    handleError = handleErrorImp;
+    if (announceState == nullptr)
+        return BT_FAIL;
 
-    current_state = STATE_DEF;
+    readBTInput = readBTInputImp;
+    if (readBTInput == nullptr)
+        return BT_FAIL;
+
+    readSInput = readSInputImp;
+    if (readSInput == nullptr)
+        return BT_FAIL;
+
+    generateNonce = generateNonceImp;
+    if (generateNonce == nullptr)
+        return BT_FAIL;
+
+    sendReply = sendReplyImp;
+    if (sendReply == nullptr)
+        return BT_FAIL;
+
+    writeBT = writeBTImp;
+    if (writeBT == nullptr)
+        return BT_FAIL;
+
+    checkUserID = checkUserIDImp;
+    if (checkUserID == nullptr)
+        return BT_FAIL;
+
+    checkUserPIN = checkUserPINImp;
+    if (checkUserPIN == nullptr)
+        return BT_FAIL;
+
+    decryptBT = decryptBTImp;
+    if (decryptBT == nullptr)
+        return BT_FAIL;
+
+    storePIN = storePINImp;
+    if (storePIN == nullptr)
+        return BT_FAIL;
+
+    soundAlarm = soundAlarmImp;
+    if (soundAlarm == nullptr)
+        return BT_FAIL;
+
+    setImmobilizer = setImmobilizerImp;
+    if (setImmobilizer == nullptr)
+        return BT_FAIL;
+
+    checkEngineOff = checkEngineOffImp;
+    if (checkEngineOff == nullptr)
+        return BT_FAIL;
+
+    handleError = handleErrorImp;
+    if (handleError == nullptr)
+        return BT_FAIL;
+
+    return BT_SUCCESS;
 }
 
 void state_err()

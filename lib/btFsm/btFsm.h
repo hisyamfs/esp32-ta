@@ -29,9 +29,6 @@ void state_new_pin();
 void state_alarm();
 void state_register();
 
-/* Holds the current and next state */
-static fsm_state current_state;
-
 /** Helper functions, variables, and constants **/
 #define BT_BUF_LEN_BYTE 32
 #define BT_BUF_LEN_BIT 256
@@ -74,7 +71,7 @@ int compareBT(bt_buffer buf1, bt_buffer buf2);
 /* Parse user request from a buffer*/
 bt_request parse_request(bt_buffer *buffer);
 
-void init_btFsm(
+int init_btFsm(
     void (*announceStateImp)(fsm_state),
     int (*readBTInputImp)(bt_buffer *),
     int (*readSInputImp)(bt_buffer *),
@@ -89,5 +86,8 @@ void init_btFsm(
     void (*setImmobilizerImp)(int),
     int (*checkEngineOffImp)(),
     void (*handleErrorImp)());
+
+void run_btFsm();
+fsm_state get_current_state();
 
 #endif // !BT_FSM_H
