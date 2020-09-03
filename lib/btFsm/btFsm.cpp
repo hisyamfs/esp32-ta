@@ -5,7 +5,7 @@ static bt_buffer inbuf, outbuf, nonce;
 static bt_request user_request;
 
 /* State table, holds the pointer to each state implementation */
-void (*btFsm_state_table[])() =
+void (*btFsm_state_table[])(bt_buffer *param) =
     {
         state_err,
         state_def,
@@ -160,48 +160,53 @@ void state_err()
     handleError();
 }
 
-void state_def()
+void state_def(bt_buffer *param)
 {
-    if (readBTInput(&inbuf))
+    switch (param->event)
     {
-        user_request = parse_request(&inbuf);
+    case EVENT_BT_INPUT:
+        user_request = parse_request(param);
         switch (user_request)
         {
         case REQUEST_UNLOCK:
         case REQUEST_CHANGE_PIN:
         case REQUEST_REMOVE_PHONE:
-        {
             sendReply(ACK);
             fsm_state next_state = STATE_ID_CHECK;
             announceState(next_state);
             current_state = next_state;
             break;
-        }
         default: // REQUEST_NOTHING and other unimplemented feature (e.g. register)
-        {
             sendReply(NACK);
             fsm_state next_state = STATE_DEF;
             announceState(next_state);
             current_state = next_state;
             break;
         }
-        }
-    }
-    if (readSInput(&outbuf))
-    {
-        writeBT(&outbuf);
+        break;
+    case EVENT_S_INPUT:
+        writeBT(param);
+        break;
+    default:
+        break;
     }
 }
 
-void state_id_check()
+void state_id_check(bt_buffer *param)
 {
-    if (readBTInput(&inbuf))
+    switch (param->event)
     {
-        if (checkUserID(&inbuf) == BT_SUCCESS)
+    case EVENT_BT_INPUT:
+        if (checkUserID(param) == BT_SUCCESS)
         {
             sendReply(ACK);
             announceState(STATE_CHALLENGE);
             current_state = STATE_CHALLENGE;
+            // Directly launch event for challenge state
+            // Ugly!!
+            bt_buffer generator;
+            generator.event = EVENT_NOTHING;
+            btFsm_state_table[current_state](&generator);
         }
         else
         {
@@ -209,32 +214,43 @@ void state_id_check()
             announceState(STATE_DEF);
             current_state = STATE_DEF;
         }
+        break;
+    default:
+        break;
     }
 }
 
-void state_challenge()
+void state_challenge(bt_buffer *param)
 {
-    if (generateNonce(&nonce) == BT_SUCCESS)
+    switch (param->event)
     {
-        writeBT(&nonce);
-        current_state = STATE_VERIFICATION;
-        announceState(current_state);
-    }
-    else // Fail to generate nonce, error
-    {
-        sendReply(NACK);
-        announceState(STATE_ERR);
-        current_state = STATE_ERR;
+    case EVENT_NOTHING:
+        if (generateNonce(&nonce) == BT_SUCCESS)
+        {
+            writeBT(&nonce);
+            current_state = STATE_VERIFICATION;
+            announceState(current_state);
+        }
+        else // Fail to generate nonce, error
+        {
+            sendReply(NACK);
+            announceState(STATE_ERR);
+            current_state = STATE_ERR;
+        }
+        break;
+    default:
+        break;
     }
 }
 
-void state_verification()
+void state_verification(bt_buffer *param)
 {
-    if (readBTInput(&inbuf))
+    switch (param->event)
     {
+    case EVENT_BT_INPUT:
         bt_buffer response;
         init_bt_buffer(&response);
-        if (decryptBT(&inbuf, &response) == BT_SUCCESS)
+        if (decryptBT(param, &response) == BT_SUCCESS)
         {
             // compare the response with the nonce
             if (compareBT(&nonce, &response) == BT_SUCCESS)
@@ -256,16 +272,20 @@ void state_verification()
             announceState(STATE_ERR);
             current_state = STATE_ERR;
         }
+        break;
+    default:
+        break;
     }
 }
 
-void state_pin()
+void state_pin(bt_buffer *param)
 {
-    if (readBTInput(&inbuf))
+    switch (param->event)
     {
+    case EVENT_BT_INPUT:
         bt_buffer pin;
         init_bt_buffer(&pin);
-        if (decryptBT(&inbuf, &pin) == BT_SUCCESS)
+        if (decryptBT(param, &pin) == BT_SUCCESS)
         {
             // compare the response with the nonce
             if (checkUserPIN(&pin) == BT_SUCCESS)
@@ -302,24 +322,33 @@ void state_pin()
             announceState(STATE_ERR);
             current_state = STATE_ERR;
         }
+        break;
+    default:
+        break;
     }
 }
 
-void state_unlock()
+void state_unlock(bt_buffer *param)
 {
-    if (checkEngineOff() == BT_SUCCESS)
+    switch (param->event)
     {
+    case EVENT_S_INPUT:
+    case EVENT_ENGINE_OFF:
         setImmobilizer(BT_ENABLE);
         sendReply(ACK);
         announceState(STATE_DEF);
         current_state = STATE_DEF;
+        break;
+    default:
+        break;
     }
 }
 
-void state_new_pin()
+void state_new_pin(bt_buffer *param)
 {
-    if (readBTInput(&inbuf))
+    switch (param->event)
     {
+    case EVENT_BT_INPUT:
         bt_buffer pin;
         init_bt_buffer(&pin);
         if (decryptBT(&inbuf, &pin) == BT_SUCCESS)
@@ -337,20 +366,28 @@ void state_new_pin()
             announceState(STATE_ERR);
             current_state = STATE_ERR;
         }
+        break;
+    default:
+        break;
     }
 }
 
-void state_alarm()
+void state_alarm(bt_buffer *param)
 {
-    if (soundAlarm() == BT_SUCCESS)
+    switch (param->event)
     {
+    case EVENT_S_INPUT:
+    case EVENT_TIMEOUT:
         sendReply(ACK);
         announceState(STATE_DEF);
         current_state = STATE_DEF;
+        break;
+    default:
+        break;
     }
 }
 
-void state_register()
+void state_register(bt_buffer *param)
 {
     // TODO("Implement the state")
 }
@@ -358,6 +395,7 @@ void state_register()
 /* Initialize bt_buffer structure */
 void init_bt_buffer(bt_buffer *buffer)
 {
+    buffer->event = EVENT_NOTHING;
     buffer->len = 0;
     for (int i = 0; i < BT_BLOCK_SIZE_BYTE; i++)
     {

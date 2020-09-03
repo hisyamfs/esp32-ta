@@ -4,34 +4,6 @@
 #include "stddef.h"
 #include "stdint.h"
 
-/* State enum declaration, to enforce correctness */
-typedef enum
-{
-    STATE_ERR = 0,
-    STATE_DEF,
-    STATE_ID_CHECK,
-    STATE_CHALLENGE,
-    STATE_VERIFICATION,
-    STATE_PIN,
-    STATE_UNLOCK,
-    STATE_NEW_PIN,
-    STATE_ALARM,
-    STATE_KEY_EXCHANGE,
-    STATE_REGISTER
-} fsm_state;
-
-/* State function, implements each state */
-void state_err();
-void state_def();
-void state_id_check();
-void state_challenge();
-void state_verification();
-void state_pin();
-void state_unlock();
-void state_new_pin();
-void state_alarm();
-void state_register();
-
 /** Helper functions, variables, and constants **/
 #define BT_BUF_LEN_BYTE 32
 #define BT_BUF_LEN_BIT 256
@@ -41,12 +13,6 @@ void state_register();
 #define BT_FAIL 1
 #define BT_ENABLE 1
 #define BT_DISABLE 0
-
-typedef struct BTBuffer
-{
-    uint8_t data[BT_BUF_LEN_BYTE];
-    size_t len;
-} bt_buffer;
 
 typedef enum BTReply
 {
@@ -64,6 +30,55 @@ typedef enum BTRequest
     REQUEST_REMOVE_PHONE,   // 4
     REQUEST_DISABLE         // 5
 } bt_request;
+
+typedef enum BTEvent
+{
+    EVENT_NOTHING,
+    EVENT_BT_INPUT,
+    EVENT_BT_OUTPUT,
+    EVENT_BT_CONNECT,
+    EVENT_BT_DISCONNECT,
+    EVENT_TIMEOUT,
+    EVENT_ERROR,
+    EVENT_ALARM_OFF,
+    EVENT_ENGINE_OFF,
+    EVENT_S_INPUT // for debugging purposes
+} bt_event;
+
+typedef struct BTBuffer
+{
+    bt_event event;
+    uint8_t data[BT_BUF_LEN_BYTE];
+    size_t len;
+} bt_buffer;
+
+/* State enum declaration, to enforce correctness */
+typedef enum
+{
+    STATE_ERR = 0,
+    STATE_DEF,
+    STATE_ID_CHECK,
+    STATE_CHALLENGE,
+    STATE_VERIFICATION,
+    STATE_PIN,
+    STATE_UNLOCK,
+    STATE_NEW_PIN,
+    STATE_ALARM,
+    STATE_KEY_EXCHANGE,
+    STATE_REGISTER
+} fsm_state;
+
+/* State function, implements each state */
+void state_err(bt_buffer *param);
+void state_def(bt_buffer *param);
+void state_id_check(bt_buffer *param);
+void state_challenge(bt_buffer *param);
+void state_verification(bt_buffer *param);
+void state_pin(bt_buffer *param);
+void state_unlock(bt_buffer *param);
+void state_new_pin(bt_buffer *param);
+void state_alarm(bt_buffer *param);
+void state_register(bt_buffer *param);
 
 /* Initialize bt_buffer structure */
 void init_bt_buffer(bt_buffer *buffer);
