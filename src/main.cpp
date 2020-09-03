@@ -1,6 +1,6 @@
 #include <Arduino.h>
 #include "btFsm.h"
-#include "BluetoothSerial.h"
+#include "myBluetoothSerial.h"
 #include "SPIFFS.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/cipher.h"
@@ -28,7 +28,7 @@ static uint8_t symkey[MY_AES_BLOCK_SIZE];
 
 mbedtls_aes_context aes;
 
-BluetoothSerial SerialBT;
+myBluetoothSerial SerialBT;
 
 char USER_ID[MBEDTLS_MPI_MAX_SIZE];
 unsigned int id_len = 0;
@@ -147,7 +147,9 @@ void setup()
 	if (ret != BT_SUCCESS)
 	{
 		Serial.println("State machine init failed.");
-		while (1) {};
+		while (1)
+		{
+		};
 	}
 
 	Serial.println("Initializing immobilizer....");
@@ -305,7 +307,7 @@ int writeBTImp(bt_buffer *outbuf)
 int checkUserIDImp(bt_buffer *id)
 {
 	int no_mismatch = (id->len == id_len);
-	for (int i = 0; i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
+	for (int i = 0; i < id_len && i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
 	{
 		no_mismatch = (id->data[i] == USER_ID[i]);
 	}
@@ -317,8 +319,14 @@ int checkUserIDImp(bt_buffer *id)
 
 int checkUserPINImp(bt_buffer *pin)
 {
+	if (DEBUG_MODE)
+	{
+		Serial.println("PIN Anda adalah : ");
+		Serial.write((const uint8_t *)USER_PIN, pin_len);
+		Serial.println();
+	}
 	int no_mismatch = (strlen((const char *)pin->data) == pin_len);
-	for (int i = 0; i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
+	for (int i = 0; i < pin_len && i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
 	{
 		no_mismatch = (pin->data[i] == USER_PIN[i]);
 	}

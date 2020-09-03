@@ -237,7 +237,7 @@ void state_verification()
         if (decryptBT(&inbuf, &response) == BT_SUCCESS)
         {
             // compare the response with the nonce
-            if (compareBT(nonce, response) == BT_SUCCESS)
+            if (compareBT(&nonce, &response) == BT_SUCCESS)
             {
                 sendReply(ACK);
                 announceState(STATE_PIN);
@@ -366,12 +366,12 @@ void init_bt_buffer(bt_buffer *buffer)
 }
 
 /* Check if two buffer store the same data */
-int compareBT(bt_buffer buf1, bt_buffer buf2)
+int compareBT(const bt_buffer *buf1, const bt_buffer *buf2)
 {
-    int no_mismatch = (buf1.len == buf2.len);
-    for (int i = 0; i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
+    int no_mismatch = (buf1->len == buf2->len);
+    for (int i = 0; i < buf1->len && i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
     {
-        no_mismatch = (buf1.data[i] == buf2.data[i]);
+        no_mismatch = (buf1->data[i] == buf2->data[i]);
     }
     if (no_mismatch)
         return BT_SUCCESS;

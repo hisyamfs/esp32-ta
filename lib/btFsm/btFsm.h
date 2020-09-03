@@ -1,6 +1,9 @@
 #ifndef BT_FSM_H
 #define BT_FSM_H
 
+#include "stddef.h"
+#include "stdint.h"
+
 /* State enum declaration, to enforce correctness */
 typedef enum
 {
@@ -41,8 +44,8 @@ void state_register();
 
 typedef struct BTBuffer
 {
-    unsigned char data[BT_BUF_LEN_BYTE];
-    unsigned int len;
+    uint8_t data[BT_BUF_LEN_BYTE];
+    size_t len;
 } bt_buffer;
 
 typedef enum BTReply
@@ -66,7 +69,7 @@ typedef enum BTRequest
 void init_bt_buffer(bt_buffer *buffer);
 
 /* Check if two buffer store the same data */
-int compareBT(bt_buffer buf1, bt_buffer buf2);
+int compareBT(const bt_buffer *buf1, const bt_buffer *buf2);
 
 /* Parse user request from a buffer*/
 bt_request parse_request(bt_buffer *buffer);
