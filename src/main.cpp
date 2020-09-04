@@ -36,15 +36,13 @@ char USER_PIN[128];
 unsigned int pin_len = 0;
 
 void announceStateImp(fsm_state state);
-int readBTInputImp(bt_buffer *inbuf);
-int readSInputImp(bt_buffer *outbuf);
 int generateNonceImp(bt_buffer *nonce);
 int sendReplyImp(bt_reply status);
-int writeBTImp(bt_buffer *outbuf);
-int checkUserIDImp(bt_buffer *id);
-int checkUserPINImp(bt_buffer *pin);
-int decryptBTImp(bt_buffer *ciphertext, bt_buffer *msg);
-int storePINImp(bt_buffer *pin);
+int writeBTImp(const bt_buffer *outbuf);
+int checkUserIDImp(const bt_buffer *id);
+int checkUserPINImp(const bt_buffer *pin);
+int decryptBTImp(const bt_buffer *ciphertext, bt_buffer *msg);
+int storePINImp(const bt_buffer *pin);
 int soundAlarmImp();
 void setImmobilizerImp(int enable);
 int checkEngineOffImp();
@@ -56,6 +54,7 @@ void disableImmobilizer();
 
 void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
 void printError(int errcode);
+void onBTInputInterface(const uint8_t *buffer, size_t blen);
 
 void setup()
 {
@@ -129,21 +128,18 @@ void setup()
 	}
 
 	Serial.println("Initializing state machine....");
-	ret = init_btFsm(
-		&announceStateImp,
-		&readBTInputImp,
-		&readSInputImp,
-		&generateNonceImp,
-		&sendReplyImp,
-		&writeBTImp,
-		&checkUserIDImp,
-		&checkUserPINImp,
-		&decryptBTImp,
-		&storePINImp,
-		&soundAlarmImp,
-		&setImmobilizerImp,
-		&checkEngineOffImp,
-		&exit);
+	ret = init_btFsm(&announceStateImp,
+					 &generateNonceImp,
+					 &sendReplyImp,
+					 &writeBTImp,
+					 &checkUserIDImp,
+					 &checkUserPINImp,
+					 &decryptBTImp,
+					 &storePINImp,
+					 &soundAlarmImp,
+					 &setImmobilizerImp,
+					 &checkEngineOffImp,
+					 &exit);
 	if (ret != BT_SUCCESS)
 	{
 		Serial.println("State machine init failed.");
@@ -158,18 +154,20 @@ void setup()
 
 	SerialBT.begin("ESP32test"); //Bluetooth device name
 	Serial.println("The device started, now you can pair it with bluetooth!");
+
+	SerialBT.onData(onBTInputInterface);
 }
 
 void loop()
 {
-	// int lc = 0;
-	// for (lc = 0; lc < 50; lc++)
-	// {
-	run_btFsm();
+	size_t slen = Serial.available();
+	if (slen > 0 && slen <= 32)
+	{
+		char sbuf[32];
+		Serial.readBytes(sbuf, slen);
+		onSInput((const uint8_t *)sbuf, slen);
+	}
 	delay(20);
-	// Serial.println("Loop!");
-	// }
-	// Serial.println("loop");
 }
 
 void announceStateImp(fsm_state state)
@@ -214,50 +212,6 @@ void announceStateImp(fsm_state state)
 	}
 }
 
-int readBTInputImp(bt_buffer *inbuf)
-{
-	int incoming = SerialBT.available();
-	if (incoming)
-	{
-		if (incoming > BT_BUF_LEN_BYTE)
-			incoming = BT_BUF_LEN_BYTE; // clamp inbuf length
-		inbuf->len = incoming;
-		SerialBT.readBytes(inbuf->data, inbuf->len);
-		if (DEBUG_MODE)
-		{
-			Serial.println("HP: ");
-			Serial.write(inbuf->data, inbuf->len);
-			Serial.println();
-			printBytes(inbuf->data, inbuf->len, NULL, 0);
-		}
-		return inbuf->len;
-	}
-	else // No incoming data
-		return 0;
-}
-
-int readSInputImp(bt_buffer *outbuf)
-{
-	int incoming = Serial.available();
-	if (incoming)
-	{
-		if (incoming > BT_BUF_LEN_BYTE)
-			incoming = BT_BUF_LEN_BYTE; // clamp inbuf length
-		outbuf->len = incoming;
-		Serial.readBytes(outbuf->data, outbuf->len);
-		if (DEBUG_MODE)
-		{
-			Serial.println("ESP32: ");
-			Serial.write(outbuf->data, outbuf->len);
-			Serial.println();
-			printBytes(outbuf->data, outbuf->len, NULL, 0);
-		}
-		return outbuf->len;
-	}
-	else // No incoming data
-		return 0;
-}
-
 // TODO("Ganti agar menggunakan CTR-DRBG")
 int generateNonceImp(bt_buffer *nonce)
 {
@@ -291,7 +245,7 @@ int sendReplyImp(bt_reply status)
 	return writeBTImp(&repl);
 }
 
-int writeBTImp(bt_buffer *outbuf)
+int writeBTImp(const bt_buffer *outbuf)
 {
 	SerialBT.write(outbuf->data, outbuf->len);
 	if (DEBUG_MODE)
@@ -304,7 +258,7 @@ int writeBTImp(bt_buffer *outbuf)
 	return BT_SUCCESS;
 }
 
-int checkUserIDImp(bt_buffer *id)
+int checkUserIDImp(const bt_buffer *id)
 {
 	int no_mismatch = (id->len == id_len);
 	for (int i = 0; i < id_len && i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
@@ -317,7 +271,7 @@ int checkUserIDImp(bt_buffer *id)
 		return BT_FAIL;
 }
 
-int checkUserPINImp(bt_buffer *pin)
+int checkUserPINImp(const bt_buffer *pin)
 {
 	if (DEBUG_MODE)
 	{
@@ -336,7 +290,7 @@ int checkUserPINImp(bt_buffer *pin)
 		return BT_FAIL;
 }
 
-int decryptBTImp(bt_buffer *ciphertext, bt_buffer *msg)
+int decryptBTImp(const bt_buffer *ciphertext, bt_buffer *msg)
 {
 	// TODO("Add boundary checking")
 	// Decrypt
@@ -375,7 +329,7 @@ int decryptBTImp(bt_buffer *ciphertext, bt_buffer *msg)
 	return BT_SUCCESS;
 }
 
-int storePINImp(bt_buffer *pin)
+int storePINImp(const bt_buffer *pin)
 {
 	// load the new pin to SPIFFS
 	File file = SPIFFS.open("/userPin.txt", FILE_WRITE);
@@ -411,6 +365,7 @@ int storePINImp(bt_buffer *pin)
 int soundAlarmImp()
 {
 	delay(3000);
+	onTimeout();
 	return BT_SUCCESS;
 }
 
@@ -425,6 +380,7 @@ void setImmobilizerImp(int enable)
 int checkEngineOffImp()
 {
 	delay(3000);
+	onEngineOff();
 	return BT_SUCCESS;
 }
 
@@ -472,97 +428,6 @@ void printError(int errcode)
 	Serial.write((unsigned char *)buf, strlen(buf));
 }
 
-void generateKeyPair()
-{
-	mbedtls_pk_context gk;
-	mbedtls_rsa_context *rsa;
-	mbedtls_entropy_context gk_entropy;
-	mbedtls_ctr_drbg_context gk_ctr_drbg;
-	mbedtls_mpi N, P, Q, D, E, DP, DQ, QP;
-	mbedtls_pk_init(&gk);
-	mbedtls_ctr_drbg_init(&gk_ctr_drbg);
-	mbedtls_entropy_init(&gk_entropy);
-
-	// init with sane values. Don't know what it means though.
-	mbedtls_mpi_init(&N);
-	mbedtls_mpi_init(&P);
-	mbedtls_mpi_init(&Q);
-	mbedtls_mpi_init(&D);
-	mbedtls_mpi_init(&E);
-	mbedtls_mpi_init(&DP);
-	mbedtls_mpi_init(&DQ);
-	mbedtls_mpi_init(&QP);
-
-	int ret = mbedtls_ctr_drbg_seed(&gk_ctr_drbg, mbedtls_entropy_func, &gk_entropy,
-									NULL, 0);
-	if (ret != 0)
-	{
-		printError(ret);
-		exit();
-	}
-
-	Serial.println("Generating RS....");
-	ret = mbedtls_pk_setup(&gk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
-	if (ret != 0)
-	{
-		printError(ret);
-		exit();
-	}
-	rsa = mbedtls_pk_rsa(gk);
-	ret = mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &gk_ctr_drbg, 2048, 65537);
-	if (ret != 0)
-	{
-		printError(ret);
-		exit();
-	}
-	ret = mbedtls_rsa_export(rsa, &N, &P, &Q, &D, &E);
-	if (ret != 0)
-	{
-		printError(ret);
-		exit();
-	}
-	ret = mbedtls_rsa_export_crt(rsa, &DP, &DQ, &QP);
-	if (ret != 0)
-	{
-		printError(ret);
-		exit();
-	}
-
-	Serial.println("Writing to serial....");
-	unsigned char key_buf[2048];
-	unsigned int key_len = 0;
-	ret = mbedtls_pk_write_key_pem(&gk, key_buf, sizeof(key_buf));
-	if (ret != 0)
-	{
-		printError(ret);
-		exit();
-	}
-	key_len = strlen((char *)key_buf);
-	Serial.write(key_buf, key_len);
-
-	ret = mbedtls_pk_write_pubkey_pem(&gk, key_buf, sizeof(key_buf));
-	if (ret != 0)
-	{
-		printError(ret);
-		exit();
-	}
-	key_len = strlen((char *)key_buf);
-	Serial.write(key_buf, key_len);
-
-	mbedtls_mpi_free(&N);
-	mbedtls_mpi_free(&P);
-	mbedtls_mpi_free(&Q);
-	mbedtls_mpi_free(&D);
-	mbedtls_mpi_free(&E);
-	mbedtls_mpi_free(&DP);
-	mbedtls_mpi_free(&DQ);
-	mbedtls_mpi_free(&QP);
-
-	mbedtls_rsa_free(rsa);
-	mbedtls_ctr_drbg_free(&gk_ctr_drbg);
-	mbedtls_entropy_free(&gk_entropy);
-}
-
 void disableImmobilizer()
 {
 	digitalWrite(LED, HIGH);
@@ -576,4 +441,16 @@ void enableImmobilizer()
 void setupImmobilizer()
 {
 	pinMode(LED, OUTPUT);
+}
+
+void onBTInputInterface(const uint8_t *buffer, size_t blen)
+{
+	if (DEBUG_MODE)
+	{
+		Serial.println("HP: ");
+		Serial.write(buffer, blen);
+		Serial.println();
+		printBytes(buffer, blen, NULL, 0);
+	}
+	onBTInput(buffer, blen);
 }

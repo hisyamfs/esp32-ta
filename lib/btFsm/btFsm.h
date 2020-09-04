@@ -33,7 +33,7 @@ typedef enum BTRequest
 
 typedef enum BTEvent
 {
-    EVENT_NOTHING,
+    EVENT_TRANSITION,
     EVENT_BT_INPUT,
     EVENT_BT_OUTPUT,
     EVENT_BT_CONNECT,
@@ -47,9 +47,9 @@ typedef enum BTEvent
 
 typedef struct BTBuffer
 {
-    bt_event event;
     uint8_t data[BT_BUF_LEN_BYTE];
     size_t len;
+    bt_event event;
 } bt_buffer;
 
 /* State enum declaration, to enforce correctness */
@@ -69,43 +69,47 @@ typedef enum
 } fsm_state;
 
 /* State function, implements each state */
-void state_err(bt_buffer *param);
-void state_def(bt_buffer *param);
-void state_id_check(bt_buffer *param);
-void state_challenge(bt_buffer *param);
-void state_verification(bt_buffer *param);
-void state_pin(bt_buffer *param);
-void state_unlock(bt_buffer *param);
-void state_new_pin(bt_buffer *param);
-void state_alarm(bt_buffer *param);
-void state_register(bt_buffer *param);
+void state_err(const bt_buffer *param);
+void state_def(const bt_buffer *param);
+void state_id_check(const bt_buffer *param);
+void state_challenge(const bt_buffer *param);
+void state_verification(const bt_buffer *param);
+void state_pin(const bt_buffer *param);
+void state_unlock(const bt_buffer *param);
+void state_new_pin(const bt_buffer *param);
+void state_alarm(const bt_buffer *param);
+void state_register(const bt_buffer *param);
 
 /* Initialize bt_buffer structure */
 void init_bt_buffer(bt_buffer *buffer);
+
+int init_btFsm(void (*announceStateImp)(fsm_state),
+               int (*generateNonceImp)(bt_buffer *),
+               int (*sendReplyImp)(bt_reply),
+               int (*writeBTImp)(const bt_buffer *),
+               int (*checkUserIDImp)(const bt_buffer *),
+               int (*checkUserPINImp)(const bt_buffer *),
+               int (*decryptBTImp)(const bt_buffer *, bt_buffer *),
+               int (*storePINImp)(const bt_buffer *),
+               int (*soundAlarmImp)(),
+               void (*setImmobilizerImp)(int),
+               int (*checkEngineOffImp)(),
+               void (*handleErrorImp)());
 
 /* Check if two buffer store the same data */
 int compareBT(const bt_buffer *buf1, const bt_buffer *buf2);
 
 /* Parse user request from a buffer*/
-bt_request parse_request(bt_buffer *buffer);
+bt_request parse_request(const bt_buffer *buffer);
 
-int init_btFsm(
-    void (*announceStateImp)(fsm_state),
-    int (*readBTInputImp)(bt_buffer *),
-    int (*readSInputImp)(bt_buffer *),
-    int (*generateNonceImp)(bt_buffer *),
-    int (*sendReplyImp)(bt_reply),
-    int (*writeBTImp)(bt_buffer *),
-    int (*checkUserIDImp)(bt_buffer *),
-    int (*checkUserPINImp)(bt_buffer *),
-    int (*decryptBTImp)(bt_buffer *, bt_buffer *),
-    int (*storePINImp)(bt_buffer *),
-    int (*soundAlarmImp)(),
-    void (*setImmobilizerImp)(int),
-    int (*checkEngineOffImp)(),
-    void (*handleErrorImp)());
-
-void run_btFsm();
+void run_btFsm(const bt_buffer *param);
+void onBTInput(const uint8_t *data, size_t len);
+void onSInput(const uint8_t *data, size_t len);
+void onEngineOff();
+void onTimeout();
+void onBTConnect(const uint8_t *addr, size_t len);
+void onBTDisconnect(const uint8_t *addr, size_t len);
+void onTransition();
 fsm_state get_current_state();
 
 #endif // !BT_FSM_H

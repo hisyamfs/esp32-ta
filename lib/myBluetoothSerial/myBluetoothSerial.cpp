@@ -354,8 +354,8 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     default:
         break;
     }
-    if (custom_spp_callback)
-        (*custom_spp_callback)(event, param);
+    // if (custom_spp_callback)
+    //     (*custom_spp_callback)(event, param);
 }
 
 void myBluetoothSerial::onData(myBluetoothSerialDataCb cb)
