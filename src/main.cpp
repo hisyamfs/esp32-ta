@@ -21,32 +21,28 @@
 #define SHA_256_BYTES 32
 #define RSA_MAX_BYTES 256
 #define MY_AES_BLOCK_SIZE 16 // AES-128
-
-const int DEBUG_MODE = 1;
+#define DEBUG_MODE 1
 
 static uint8_t symkey[MY_AES_BLOCK_SIZE];
-
 mbedtls_aes_context aes;
-
 myBluetoothSerial SerialBT;
 
-char USER_ID[MBEDTLS_MPI_MAX_SIZE];
-unsigned int id_len = 0;
-char USER_PIN[128];
-unsigned int pin_len = 0;
+// char USER_ID[MBEDTLS_MPI_MAX_SIZE];
+// unsigned int id_len = 0;
+// char USER_PIN[128];
+// unsigned int pin_len = 0;
 
 void announceStateImp(fsm_state state);
 int generateNonceImp(bt_buffer *nonce);
 int sendReplyImp(bt_reply status);
 int writeBTImp(const bt_buffer *outbuf);
-int checkUserIDImp(const bt_buffer *id);
-int checkUserPINImp(const bt_buffer *pin);
 int decryptBTImp(const bt_buffer *ciphertext, bt_buffer *msg);
-int storePINImp(const bt_buffer *pin);
-int soundAlarmImp();
+int storePINImp(bt_buffer *pin);
+int deleteStoredCredImp(void);
+int setAlarmImp(int enable, int duration);
+int unpairBlacklistImp(const bt_buffer *client);
 void setImmobilizerImp(int enable);
-int checkEngineOffImp();
-void exit();
+void exit(void);
 
 void setupImmobilizer();
 void enableImmobilizer();
@@ -55,6 +51,7 @@ void disableImmobilizer();
 void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
 void printError(int errcode);
 void onBTInputInterface(const uint8_t *buffer, size_t blen);
+void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 
 void setup()
 {
@@ -70,15 +67,17 @@ void setup()
 	}
 
 	File file = SPIFFS.open("/userPin.txt", FILE_READ);
+	size_t pin_len = 0;
 	if (!file) // Error, credential not found
 	{
 		Serial.println("Error loading user credential...");
-		exit();
+		// exit();
 	}
 	// Cred loading OK
 	pin_len = file.available();
-	file.readBytes(USER_PIN, pin_len);
-	pin_len = strlen((const char *)USER_PIN);
+	char upinbuf[32];
+	file.readBytes(upinbuf, pin_len);
+	pin_len = strlen((const char *)upinbuf);
 	file.close();
 
 	file = SPIFFS.open("/userKey.txt", FILE_READ);
@@ -87,26 +86,28 @@ void setup()
 		Serial.println("Error loading user credential...");
 		exit();
 	}
-	int key_len = file.available();
+	size_t key_len = file.available();
 	file.readBytes((char *)symkey, key_len);
 	file.close();
 
 	file = SPIFFS.open("/userId.txt", FILE_READ);
+	size_t id_len = 0;
 	if (!file) // Error, credential not found
 	{
 		Serial.println("Error loading user credential...");
-		exit();
+		// exit();
 	}
 	id_len = file.available();
-	file.readBytes(USER_ID, id_len);
+	char uidbuf[32];
+	file.readBytes(uidbuf, id_len);
 	file.close();
 
 	Serial.println("Stored ID: ");
-	Serial.write((const unsigned char *)USER_ID, id_len);
+	Serial.write((const unsigned char *)uidbuf, id_len);
 	Serial.println();
 
 	Serial.println("Stored PIN: ");
-	Serial.write((const unsigned char *)USER_PIN, pin_len);
+	Serial.write((const unsigned char *)upinbuf, pin_len);
 	Serial.println();
 
 	Serial.println("Stored Key: ");
@@ -127,19 +128,29 @@ void setup()
 		exit();
 	}
 
+	Serial.println("Loading credentials....");
+	ret = load_user_cred((const uint8_t *)upinbuf, pin_len, (const uint8_t *)uidbuf, id_len);
+	if (ret == BT_SUCCESS)
+		Serial.println("Registered device : 1");
+	else
+		Serial.println("No registered device found");
+
+	Serial.println("Initializing immobilizer....");
+	setupImmobilizer();
+	setImmobilizerImp(BT_ENABLE);
+
 	Serial.println("Initializing state machine....");
-	ret = init_btFsm(&announceStateImp,
-					 &generateNonceImp,
-					 &sendReplyImp,
-					 &writeBTImp,
-					 &checkUserIDImp,
-					 &checkUserPINImp,
-					 &decryptBTImp,
-					 &storePINImp,
-					 &soundAlarmImp,
-					 &setImmobilizerImp,
-					 &checkEngineOffImp,
-					 &exit);
+	ret = init_btFsm(announceStateImp,
+					 generateNonceImp,
+					 sendReplyImp,
+					 writeBTImp,
+					 decryptBTImp,
+					 storePINImp,
+					 deleteStoredCredImp,
+					 setAlarmImp,
+					 unpairBlacklistImp,
+					 setImmobilizerImp,
+					 exit);
 	if (ret != BT_SUCCESS)
 	{
 		Serial.println("State machine init failed.");
@@ -148,14 +159,11 @@ void setup()
 		};
 	}
 
-	Serial.println("Initializing immobilizer....");
-	setupImmobilizer();
-	setImmobilizerImp(BT_ENABLE);
-
 	SerialBT.begin("ESP32test"); //Bluetooth device name
-	Serial.println("The device started, now you can pair it with bluetooth!");
-
 	SerialBT.onData(onBTInputInterface);
+	esp_err_t cb_ret = SerialBT.register_callback(custom_callback);
+	if (cb_ret != ESP_OK)
+		Serial.println("Custom callback init failed!");
 }
 
 void loop()
@@ -170,6 +178,34 @@ void loop()
 	delay(20);
 }
 
+void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
+{
+	static uint8_t cl_addr[6];
+	size_t ADDR_LEN = 6;
+	switch (event)
+	{
+	case ESP_SPP_SRV_OPEN_EVT:
+	{
+		Serial.print("Connected to:");
+		Serial.write(param->srv_open.rem_bda, ADDR_LEN);
+		Serial.println();
+		memcpy(cl_addr, param->srv_open.rem_bda, ADDR_LEN);
+		const char header[] = "Client address:";
+		printBytes((const uint8_t *)cl_addr, ADDR_LEN, header, strlen(header));
+		onBTConnect((const uint8_t *)cl_addr, ADDR_LEN);
+		break;
+	}
+	case ESP_SPP_CLOSE_EVT:
+	{
+		Serial.println("Disconnected!");
+		onBTDisconnect((const uint8_t *)cl_addr, ADDR_LEN);
+		break;
+	}
+	default:
+		break;
+	}
+}
+
 void announceStateImp(fsm_state state)
 {
 	switch (state)
@@ -177,11 +213,11 @@ void announceStateImp(fsm_state state)
 	case STATE_ERR:
 		Serial.println("STATE : ERR");
 		break;
-	case STATE_DEF:
-		Serial.println("STATE : DEF");
+	case STATE_DISCONNECT:
+		Serial.println("STATE : DISCONNECT");
 		break;
-	case STATE_ID_CHECK:
-		Serial.println("STATE : ID CHECK");
+	case STATE_CONNECT:
+		Serial.println("STATE : CONNECT");
 		break;
 	case STATE_CHALLENGE:
 		Serial.println("STATE : CHALLENGE");
@@ -258,38 +294,6 @@ int writeBTImp(const bt_buffer *outbuf)
 	return BT_SUCCESS;
 }
 
-int checkUserIDImp(const bt_buffer *id)
-{
-	int no_mismatch = (id->len == id_len);
-	for (int i = 0; i < id_len && i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
-	{
-		no_mismatch = (id->data[i] == USER_ID[i]);
-	}
-	if (no_mismatch)
-		return BT_SUCCESS;
-	else
-		return BT_FAIL;
-}
-
-int checkUserPINImp(const bt_buffer *pin)
-{
-	if (DEBUG_MODE)
-	{
-		Serial.println("PIN Anda adalah : ");
-		Serial.write((const uint8_t *)USER_PIN, pin_len);
-		Serial.println();
-	}
-	int no_mismatch = (strlen((const char *)pin->data) == pin_len);
-	for (int i = 0; i < pin_len && i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
-	{
-		no_mismatch = (pin->data[i] == USER_PIN[i]);
-	}
-	if (no_mismatch)
-		return BT_SUCCESS;
-	else
-		return BT_FAIL;
-}
-
 int decryptBTImp(const bt_buffer *ciphertext, bt_buffer *msg)
 {
 	// TODO("Add boundary checking")
@@ -329,7 +333,8 @@ int decryptBTImp(const bt_buffer *ciphertext, bt_buffer *msg)
 	return BT_SUCCESS;
 }
 
-int storePINImp(const bt_buffer *pin)
+// Uses strlen to determine pin's real length, if the param uses padding. Pin's length may be modified by the function
+int storePINImp(bt_buffer *pin)
 {
 	// load the new pin to SPIFFS
 	File file = SPIFFS.open("/userPin.txt", FILE_WRITE);
@@ -337,36 +342,60 @@ int storePINImp(const bt_buffer *pin)
 	if (!file)
 	{
 		Serial.println("Gagal mengubah PIN, silakan coba lagi.");
+		file.close();
 		return BT_FAIL;
 	}
 	else if (new_pin_len <= BT_BLOCK_SIZE_BYTE)
 	{
 		Serial.println("Berhasil mengubah PIN");
-		memcpy(USER_PIN, pin->data, new_pin_len);
-		pin_len = new_pin_len;
-		file.write((const uint8_t *)USER_PIN, pin_len);
+		// memcpy(USER_PIN, pin->data, new_pin_len);
+		pin->len = new_pin_len;
+		file.write((const uint8_t *)pin->data, pin->len);
 		if (DEBUG_MODE)
 		{
 			Serial.print("PIN Baru : ");
-			Serial.println(pin_len);
-			Serial.write((const uint8_t *)USER_PIN, pin_len);
+			Serial.println(pin->len);
+			Serial.write((const uint8_t *)pin->data, pin->len);
 			Serial.println();
 		}
+		file.close();
 		return BT_SUCCESS;
 	}
 	else
 	{
 		Serial.println("PIN terlalu panjang, harus kurang dari 16 karakter.");
+		file.close();
 		return BT_FAIL;
 	}
-	file.close();
 }
 
-int soundAlarmImp()
+int deleteStoredCredImp(void)
 {
-	delay(3000);
-	onTimeout();
+	SPIFFS.remove("/userPin.txt");
+	SPIFFS.remove("/userID.ini");
 	return BT_SUCCESS;
+}
+
+int setAlarmImp(int enable, int duration)
+{
+	if (enable == BT_ENABLE)
+	{
+		delay(duration);
+		onTimeout();
+	}
+	return BT_SUCCESS;
+}
+
+int unpairBlacklistImp(const bt_buffer *client)
+{
+	if (client->len == BT_ADDR_LEN)
+	{
+		SerialBT.unpairDevice((uint8_t *)client->data);
+		SerialBT.disconnect();
+		return BT_SUCCESS;
+	}
+	else
+		return BT_FAIL;
 }
 
 void setImmobilizerImp(int enable)
@@ -377,14 +406,7 @@ void setImmobilizerImp(int enable)
 		disableImmobilizer();
 }
 
-int checkEngineOffImp()
-{
-	delay(3000);
-	onEngineOff();
-	return BT_SUCCESS;
-}
-
-void exit()
+void exit(void)
 {
 	mbedtls_aes_free(&aes);
 
