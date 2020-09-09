@@ -77,7 +77,11 @@ static int checkUserID(const bt_buffer *id)
 // check user pin based on a buffer value. returns BT_SUCCESS if it matches.
 static int checkUserPIN(const bt_buffer *pin)
 {
-    return compareBT(pin, &USER_PIN);
+    bt_buffer depadded_pin;
+    init_bt_buffer(&depadded_pin);
+    depadded_pin.len = strlen((const char *)pin->data);
+    memcpy(&depadded_pin.data, pin->data, depadded_pin.len);
+    return compareBT(&depadded_pin, &USER_PIN);
 }
 
 static void change_state(fsm_state next_state)
