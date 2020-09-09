@@ -107,5 +107,6 @@ int load_user_cred(const uint8_t *pin, size_t plen, const uint8_t *addr, size_t 
 int set_user_pin(const uint8_t *pin, size_t plen);
 
 fsm_state get_current_state();
+unsigned int get_registration_status();
 
 #endif // !BT_FSM_H

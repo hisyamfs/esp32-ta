@@ -58,8 +58,31 @@ void setup()
 	int ret = 0;
 	Serial.begin(115200);
 
-	Serial.println("Initializing...");
+	Serial.println("Initializing immobilizer....");
+	setupImmobilizer();
+	setImmobilizerImp(BT_ENABLE);
 
+	Serial.println("Initializing state machine....");
+	ret = init_btFsm(announceStateImp,
+					 generateNonceImp,
+					 sendReplyImp,
+					 writeBTImp,
+					 decryptBTImp,
+					 storePINImp,
+					 deleteStoredCredImp,
+					 setAlarmImp,
+					 unpairBlacklistImp,
+					 setImmobilizerImp,
+					 exit);
+	if (ret != BT_SUCCESS)
+	{
+		Serial.println("State machine init failed.");
+		while (1)
+		{
+		};
+	}
+
+	
 	if (!SPIFFS.begin(true))
 	{
 		Serial.println("An Error has occurred while mounting SPIFFS");
@@ -90,7 +113,7 @@ void setup()
 	file.readBytes((char *)symkey, key_len);
 	file.close();
 
-	file = SPIFFS.open("/userId.txt", FILE_READ);
+	file = SPIFFS.open("/userID.ini", FILE_READ);
 	size_t id_len = 0;
 	if (!file) // Error, credential not found
 	{
@@ -105,6 +128,7 @@ void setup()
 	Serial.println("Stored ID: ");
 	Serial.write((const unsigned char *)uidbuf, id_len);
 	Serial.println();
+	printBytes((const uint8_t*) uidbuf, id_len, NULL, 0);
 
 	Serial.println("Stored PIN: ");
 	Serial.write((const unsigned char *)upinbuf, pin_len);
@@ -131,39 +155,24 @@ void setup()
 	Serial.println("Loading credentials....");
 	ret = load_user_cred((const uint8_t *)upinbuf, pin_len, (const uint8_t *)uidbuf, id_len);
 	if (ret == BT_SUCCESS)
-		Serial.println("Registered device : 1");
+	{
+		Serial.printf("is_registered : %c\n", get_registration_status());
+	}
 	else
 		Serial.println("No registered device found");
 
-	Serial.println("Initializing immobilizer....");
-	setupImmobilizer();
-	setImmobilizerImp(BT_ENABLE);
-
-	Serial.println("Initializing state machine....");
-	ret = init_btFsm(announceStateImp,
-					 generateNonceImp,
-					 sendReplyImp,
-					 writeBTImp,
-					 decryptBTImp,
-					 storePINImp,
-					 deleteStoredCredImp,
-					 setAlarmImp,
-					 unpairBlacklistImp,
-					 setImmobilizerImp,
-					 exit);
-	if (ret != BT_SUCCESS)
-	{
-		Serial.println("State machine init failed.");
-		while (1)
-		{
-		};
-	}
-
-	SerialBT.begin("ESP32test"); //Bluetooth device name
 	SerialBT.onData(onBTInputInterface);
 	esp_err_t cb_ret = SerialBT.register_callback(custom_callback);
-	if (cb_ret != ESP_OK)
+	if (cb_ret != ESP_OK) 
+	{
 		Serial.println("Custom callback init failed!");
+		exit();
+	}
+	else
+	{
+		SerialBT.begin("ESP32test");
+		Serial.println("---------START----------");
+	}
 }
 
 void loop()

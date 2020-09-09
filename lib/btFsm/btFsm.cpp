@@ -4,8 +4,8 @@
 
 /* FSM variables */
 static bt_buffer nonce, USER_ADDR, USER_PIN;
-static bt_request user_request;
-static uint is_registered;
+static volatile bt_request user_request;
+static volatile bt_reply IS_REGISTERED;
 
 /* State function, implements each state */
 static void state_err(const bt_buffer *param);
@@ -94,6 +94,11 @@ fsm_state get_current_state()
     return current_state;
 }
 
+unsigned int get_registration_status()
+{
+    return (unsigned int)IS_REGISTERED;
+}
+
 static void run_btFsm(const bt_buffer *param)
 {
     btFsm_state_table[current_state](param);
@@ -172,7 +177,7 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
     init_bt_buffer(&nonce);
     init_bt_buffer(&USER_PIN);
     init_bt_buffer(&USER_ADDR);
-    is_registered = 0;
+    IS_REGISTERED = NACK;
     user_request = REQUEST_NOTHING;
     current_state = STATE_ERR;
 
@@ -221,6 +226,7 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
         return BT_FAIL;
 
     current_state = STATE_DISCONNECT;
+    announceState(current_state);
     return BT_SUCCESS;
 }
 
@@ -242,7 +248,7 @@ static void state_disconnect(const bt_buffer *param)
     switch (param->event)
     {
     case EVENT_BT_CONNECT:
-        if (is_registered && (checkUserID(param) != BT_SUCCESS))
+        if ((IS_REGISTERED == ACK) && (checkUserID(param) != BT_SUCCESS))
         {
             sendReply(NACK);
             // block the client from ever pairing again
@@ -268,32 +274,36 @@ static void state_connect(const bt_buffer *param)
     {
     case EVENT_BT_INPUT:
         user_request = parse_request(param);
-        switch (user_request)
+        if (IS_REGISTERED == ACK)
         {
-        case REQUEST_UNLOCK:
-        case REQUEST_CHANGE_PIN:
-        case REQUEST_REMOVE_PHONE:
-            if (is_registered)
+            switch (user_request)
             {
+            case REQUEST_UNLOCK:
+            case REQUEST_CHANGE_PIN:
+            case REQUEST_REMOVE_PHONE:
                 sendReply(ACK);
                 change_state(STATE_CHALLENGE);
-            }
-            else
+                break;
+            default: // REQUEST_NOTHING and other unimplemented feature (e.g. register)
                 sendReply(NACK);
-            break;
-        case REQUEST_REGISTER_PHONE:
-            if (!is_registered)
-            {
-                sendReply(ACK);
-                change_state(STATE_KEY_EXCHANGE);
+                // sendReply(ACK);
+                // change_state(STATE_CHALLENGE);
+                break;
             }
-            else
-                sendReply(NACK);
-            break;
-        default: // REQUEST_NOTHING and other unimplemented feature (e.g. register)
-            sendReply(NACK);
-            break;
         }
+        // else
+        // {
+        //     switch (user_request)
+        //     {
+        //     case REQUEST_REGISTER_PHONE:
+        //         sendReply(ACK);
+        //         change_state(STATE_KEY_EXCHANGE);
+        //         break;
+        //     default: // REQUEST_NOTHING and other unimplemented feature (e.g. register)
+        //         sendReply(NACK);
+        //         break;
+        //     }
+        // }
         break;
     case EVENT_S_INPUT:
         writeBT(param);
@@ -486,7 +496,7 @@ static void state_delete(const bt_buffer *param)
             sendReply(ACK);
             init_bt_buffer(&USER_PIN);
             init_bt_buffer(&USER_ADDR);
-            is_registered = 0;
+            IS_REGISTERED = NACK;
             change_state(STATE_CONNECT);
         }
         else
@@ -543,7 +553,7 @@ void init_bt_buffer(bt_buffer *buffer)
 int compareBT(const bt_buffer *buf1, const bt_buffer *buf2)
 {
     int no_mismatch = (buf1->len == buf2->len);
-    for (int i = 0; i < buf1->len && i < BT_BLOCK_SIZE_BYTE && no_mismatch; i++)
+    for (int i = 0; i < buf1->len && i < BT_BUF_LEN_BYTE && no_mismatch; i++)
     {
         no_mismatch = (buf1->data[i] == buf2->data[i]);
     }
@@ -558,7 +568,8 @@ int load_user_cred(const uint8_t *pin, size_t plen, const uint8_t *addr, size_t 
 {
     if (plen > BT_BLOCK_SIZE_BYTE || alen != BT_ADDR_LEN || plen == 0)
     {
-        is_registered = 0;
+        IS_REGISTERED = NACK;
+        // setImmobilizer(BT_DISABLE); // debugging
         return BT_FAIL;
     }
     else
@@ -569,7 +580,8 @@ int load_user_cred(const uint8_t *pin, size_t plen, const uint8_t *addr, size_t 
         USER_ADDR.event = EVENT_SET_CREDENTIAL;
         USER_ADDR.len = alen;
         memcpy(&USER_ADDR.data, addr, alen);
-        is_registered = 1;
+        IS_REGISTERED = ACK;
+        // setImmobilizer(BT_ENABLE);
         return BT_SUCCESS;
     }
 }
@@ -594,8 +606,8 @@ bt_request parse_request(const bt_buffer *buffer)
     int is_req = (buffer->data[0] == '!'); // Request begin with an exclamation mark, e.g. '!1'
     if (!is_req)
         return REQUEST_NOTHING;
-    else if (buffer->data[1] <= (char)REQUEST_DISABLE &&
-             buffer->data[1] >= (char)REQUEST_NOTHING)
+    else if (buffer->data[1] <= (uint8_t)REQUEST_DISABLE &&
+             buffer->data[1] >= (uint8_t)REQUEST_NOTHING)
         return (bt_request)buffer->data[1];
     else
         return REQUEST_NOTHING;
