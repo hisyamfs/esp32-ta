@@ -27,18 +27,20 @@ static uint8_t symkey[MY_AES_BLOCK_SIZE];
 mbedtls_aes_context aes;
 myBluetoothSerial SerialBT;
 
-// char USER_ID[MBEDTLS_MPI_MAX_SIZE];
-// unsigned int id_len = 0;
-// char USER_PIN[128];
-// unsigned int pin_len = 0;
+mbedtls_pk_context encrypt_pk;
+mbedtls_entropy_context encrypt_entropy;
+mbedtls_ctr_drbg_context encrypt_ctr_drbg;
 
 void announceStateImp(fsm_state state);
 int generateNonceImp(bt_buffer *nonce);
 int sendReplyImp(bt_reply status);
 int writeBTImp(const bt_buffer *outbuf);
 int decryptBTImp(const bt_buffer *ciphertext, bt_buffer *msg);
-int storePINImp(bt_buffer *pin);
+int storeCredentialImp(bt_buffer *pin, bt_buffer *client);
 int deleteStoredCredImp(void);
+int loadPKImp(uint8_t *keybuf, size_t keylen); // Load RSA Pubkey for the RSA Cipher
+int setCipherkeyImp(const bt_buffer *nonce);   // Load AES Symkey for the AES-128 Cipher
+int writeBTRSAImp(const bt_buffer *out);
 int setAlarmImp(int enable, int duration);
 int unpairBlacklistImp(const bt_buffer *client);
 void setImmobilizerImp(int enable);
@@ -68,8 +70,11 @@ void setup()
 					 sendReplyImp,
 					 writeBTImp,
 					 decryptBTImp,
-					 storePINImp,
+					 storeCredentialImp,
 					 deleteStoredCredImp,
+					 loadPKImp,
+					 setCipherkeyImp,
+					 writeBTRSAImp,
 					 setAlarmImp,
 					 unpairBlacklistImp,
 					 setImmobilizerImp,
@@ -216,44 +221,20 @@ void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 
 void announceStateImp(fsm_state state)
 {
-	switch (state)
-	{
-	case STATE_ERR:
-		Serial.println("STATE : ERR");
-		break;
-	case STATE_DISCONNECT:
-		Serial.println("STATE : DISCONNECT");
-		break;
-	case STATE_CONNECT:
-		Serial.println("STATE : CONNECT");
-		break;
-	case STATE_CHALLENGE:
-		Serial.println("STATE : CHALLENGE");
-		break;
-	case STATE_VERIFICATION:
-		Serial.println("STATE : VERIFICATION");
-		break;
-	case STATE_PIN:
-		Serial.println("STATE : PIN");
-		break;
-	case STATE_UNLOCK:
-		Serial.println("STATE : UNLOCK");
-		break;
-	case STATE_NEW_PIN:
-		Serial.println("STATE : NEW PIN");
-		break;
-	case STATE_ALARM:
-		Serial.println("STATE : ALARM");
-		break;
-	case STATE_KEY_EXCHANGE:
-		Serial.println("STATE : KEY EXCHANGE");
-		break;
-	case STATE_REGISTER:
-		Serial.println("STATE : REGISTER");
-		break;
-	default:
-		Serial.println("UNDEFINED STATE");
-	}
+	char *state_name[BT_NUM_STATES] =
+		{"STATE_ERR",
+		 "STATE_DISCONNECT",
+		 "STATE_CONNECT",
+		 "STATE_CHALLENGE",
+		 "STATE_VERIFICATION",
+		 "STATE_PIN",
+		 "STATE_UNLOCK",
+		 "STATE_NEW_PIN",
+		 "STATE_DELETE",
+		 "STATE_ALARM",
+		 "STATE_KEY_EXCHANGE",
+		 "STATE_REGISTER"};
+	Serial.printf("%s\n", state_name[(uint) state % BT_NUM_STATES]);
 }
 
 // TODO("Ganti agar menggunakan CTR-DRBG")
@@ -342,39 +323,61 @@ int decryptBTImp(const bt_buffer *ciphertext, bt_buffer *msg)
 }
 
 // Uses strlen to determine pin's real length, if the param uses padding. Pin's length may be modified by the function
-int storePINImp(bt_buffer *pin)
+int storeCredentialImp(bt_buffer *pin, bt_buffer *client)
 {
 	// load the new pin to SPIFFS
+	uint success;
 	File file = SPIFFS.open("/userPin.txt", FILE_WRITE);
-	unsigned int new_pin_len = strlen((const char *)pin->data);
-	if (!file)
 	{
-		Serial.println("Gagal mengubah PIN, silakan coba lagi.");
-		file.close();
-		return BT_FAIL;
-	}
-	else if (new_pin_len <= BT_BLOCK_SIZE_BYTE)
-	{
-		Serial.println("Berhasil mengubah PIN");
-		// memcpy(USER_PIN, pin->data, new_pin_len);
-		pin->len = new_pin_len;
-		file.write((const uint8_t *)pin->data, pin->len);
-		if (DEBUG_MODE)
+		success = 0;
+		unsigned int new_pin_len = strlen((const char *)pin->data);
+		if (!file)
+			Serial.println("Gagal mengubah PIN, silakan coba lagi.");
+		else if (new_pin_len > BT_BLOCK_SIZE_BYTE)
+			Serial.println("PIN terlalu panjang, harus kurang dari 16 karakter.");
+		else
 		{
-			Serial.print("PIN Baru : ");
-			Serial.println(pin->len);
-			Serial.write((const uint8_t *)pin->data, pin->len);
-			Serial.println();
+			success = 1;
+			Serial.println("Berhasil mengubah PIN");
+			// memcpy(USER_PIN, pin->data, new_pin_len);
+			pin->len = new_pin_len;
+			file.write((const uint8_t *)pin->data, pin->len);
+			if (DEBUG_MODE)
+			{
+				Serial.print("PIN Baru : ");
+				Serial.println(pin->len);
+				Serial.write((const uint8_t *)pin->data, pin->len);
+				Serial.println();
+			}
 		}
-		file.close();
-		return BT_SUCCESS;
 	}
-	else
-	{
-		Serial.println("PIN terlalu panjang, harus kurang dari 16 karakter.");
-		file.close();
+	file.close();
+	if (!success)
 		return BT_FAIL;
+
+	// store the client address at SPIFFS
+	file = SPIFFS.open("/userID.ini", FILE_WRITE);
+	{
+		success = 0;
+		if (!file)
+			Serial.println("Gagal mengubah PIN, silakan coba lagi.");
+		else if (client->len != BT_ADDR_LEN)
+			Serial.println("MAC address HP tidak sesuai format.");
+		else
+		{
+			file.write((const uint8_t *)client->data, client->len);
+			success = 1;
+			Serial.println("Berhasil menyimpan MAC address HP.");
+			if (DEBUG_MODE)
+			{
+				Serial.println("Alamat HP : ");
+				printBytes((const uint8_t *)client->data, client->len, NULL, 0);
+				Serial.println();
+			}
+		}
 	}
+	file.close();
+	return success ? BT_SUCCESS : BT_FAIL;
 }
 
 int deleteStoredCredImp(void)
@@ -477,7 +480,7 @@ void onBTInputInterface(const uint8_t *buffer, size_t blen)
 {
 	if (DEBUG_MODE)
 	{
-		Serial.println("HP: ");
+		Serial.printf("HP: %u :\n", blen);
 		Serial.write(buffer, blen);
 		Serial.println();
 		printBytes(buffer, blen, NULL, 0);
@@ -491,5 +494,81 @@ void onBTInputInterface(const uint8_t *buffer, size_t blen)
 			size_t k = (blen - i > BT_BUF_LEN_BYTE) ? BT_BUF_LEN_BYTE : (blen - i);
 			onBTInput(buffer + i, k);
 		}
+	}
+}
+
+int loadPKImp(uint8_t *keybuf, size_t keylen)
+{
+	// Load public key hp
+	mbedtls_pk_free(&encrypt_pk);
+	mbedtls_entropy_free(&encrypt_entropy);
+	mbedtls_ctr_drbg_free(&encrypt_ctr_drbg);
+
+	mbedtls_pk_init(&encrypt_pk);
+	mbedtls_entropy_init(&encrypt_entropy);
+	mbedtls_ctr_drbg_init(&encrypt_ctr_drbg);
+
+	int ret;
+	if ((ret = mbedtls_ctr_drbg_seed(&encrypt_ctr_drbg, mbedtls_entropy_func,
+									 &encrypt_entropy, NULL, 0)) != 0)
+	{
+		// public key error
+		if (DEBUG_MODE)
+			printError(ret);
+		return BT_FAIL;
+	}
+	else if ((ret = mbedtls_pk_parse_public_key(&encrypt_pk, (const uint8_t *)keybuf, keylen)) != 0)
+	{
+		// public key error
+		if (DEBUG_MODE)
+			printError(ret);
+		return BT_FAIL;
+	}
+	return BT_SUCCESS;
+}
+
+int setCipherkeyImp(const bt_buffer *nonce)
+{
+	// Load decrypt cipher dengan kunci baru
+	mbedtls_aes_free(&aes);
+	mbedtls_aes_init(&aes);
+	int kx_ret = 0;
+	if (nonce->len != BT_BLOCK_SIZE_BYTE)
+		return BT_FAIL;
+	if ((kx_ret = mbedtls_aes_setkey_dec(&aes, (const uint8_t *)nonce->data, BT_BLOCK_SIZE_BIT)) != 0)
+	{
+		if (DEBUG_MODE)
+			printError(kx_ret);
+		mbedtls_aes_free(&aes);
+		mbedtls_aes_init(&aes);
+		kx_ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char *)symkey, BT_BLOCK_SIZE_BIT);
+		return BT_FAIL;
+	}
+	return BT_SUCCESS;
+}
+
+int writeBTRSAImp(const bt_buffer *out)
+{
+	// Encrypt
+	uint8_t encrypted[1024];
+	size_t elen;
+	int ret;
+	if ((ret = mbedtls_pk_encrypt(&encrypt_pk, (const uint8_t *)out->data, out->len,
+								  encrypted, &elen, sizeof(encrypted),
+								  mbedtls_ctr_drbg_random, &encrypt_ctr_drbg)) != 0)
+	{
+		if (DEBUG_MODE)
+			printError(ret);
+		return BT_FAIL;
+	}
+	else // encrypt ok
+	{
+		if (DEBUG_MODE)
+		{
+			const char *header = "Mengirim: ";
+			printBytes(encrypted, elen, header, strlen(header));
+		}
+		SerialBT.write(encrypted, elen);
+		return 0;
 	}
 }

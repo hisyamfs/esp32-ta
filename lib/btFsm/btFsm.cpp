@@ -3,7 +3,7 @@
 #include "Arduino.h"
 
 /* FSM variables */
-static bt_buffer nonce, USER_ADDR, USER_PIN;
+static bt_buffer nonce, USER_ADDR, USER_PIN, client;
 static volatile bt_request user_request;
 static volatile bt_reply IS_REGISTERED;
 
@@ -61,8 +61,11 @@ static int (*generateNonce)(bt_buffer *nonce) = nullptr;                        
 static int (*sendReply)(bt_reply status) = nullptr;                                 // send device reply: ACK, NACK, and ERR, downstream
 static int (*writeBT)(const bt_buffer *outbuf) = nullptr;                           // send data held in output buffer. returns BT_SUCCESS on succesful transfer
 static int (*decryptBT)(const bt_buffer *ciphertext, bt_buffer *message) = nullptr; // decrypt a ciphertext. Returns BT_SUCCESS on succesful decryption
-static int (*storePIN)(bt_buffer *pin) = nullptr;                                   // store the new pin on device memory. returns BT_SUCCESS on success.
+static int (*storeCredential)(bt_buffer *pin, bt_buffer *client) = nullptr;         // store the new pin on device memory. returns BT_SUCCESS on success.
 static int (*deleteStoredCredential)(void) = nullptr;                               // Delete user id and pin from device memory
+static int (*loadPK)(uint8_t *keybuf, size_t keylen) = nullptr;                     // Load RSA Pubkey for the RSA Cipher
+static int (*setCipherkey)(const bt_buffer *nonce) = nullptr;                       // Load AES Symkey for the AES-128 Cipher
+static int (*writeBTRSA)(const bt_buffer *out) = nullptr;                           // send RSA encrypted data
 static int (*setAlarm)(int enable, int duration) = nullptr;                         // sounds the alarm
 static int (*unpairBlacklist)(const bt_buffer *client) = nullptr;                   // detect and prevent unregistered device from ever pairing again
 static void (*setImmobilizer)(int enable) = nullptr;                                // Turns immobilizer on or off
@@ -175,8 +178,11 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
                int (*sendReplyImp)(bt_reply),
                int (*writeBTImp)(const bt_buffer *),
                int (*decryptBTImp)(const bt_buffer *, bt_buffer *),
-               int (*storePINImp)(bt_buffer *),
+               int (*storeCredentialImp)(bt_buffer *, bt_buffer *),
                int (*deleteStoredCredentialImp)(void),
+               int (*loadPKImp)(uint8_t *, size_t),
+               int (*setCipherkeyImp)(const bt_buffer *),
+               int (*writeBTRSAImp)(const bt_buffer *),
                int (*setAlarmImp)(int, int),
                int (*unpairBlacklistImp)(const bt_buffer *),
                void (*setImmobilizerImp)(int),
@@ -209,12 +215,24 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
     if (decryptBT == nullptr)
         return BT_FAIL;
 
-    storePIN = storePINImp;
-    if (storePIN == nullptr)
+    storeCredential = storeCredentialImp;
+    if (storeCredential == nullptr)
         return BT_FAIL;
 
     deleteStoredCredential = deleteStoredCredentialImp;
     if (deleteStoredCredential == nullptr)
+        return BT_FAIL;
+
+    loadPK = loadPKImp;
+    if (loadPK == nullptr)
+        return BT_FAIL;
+    
+    setCipherkey = setCipherkeyImp;
+    if (setCipherkey == nullptr)
+        return BT_FAIL;
+        
+    writeBTRSA = writeBTRSAImp;
+    if (writeBTRSA == nullptr)
         return BT_FAIL;
 
     setAlarm = setAlarmImp;
@@ -264,6 +282,8 @@ static void state_disconnect(const bt_buffer *param)
         }
         else // no registered user yet, or the client is of registered address
         {
+            client.len = BT_ADDR_LEN;
+            memcpy(&client.data, param->data, client.len);
             sendReply(ACK);
             change_state(STATE_CONNECT);
         }
@@ -294,24 +314,22 @@ static void state_connect(const bt_buffer *param)
                 break;
             default: // REQUEST_NOTHING and other unimplemented feature (e.g. register)
                 sendReply(NACK);
-                // sendReply(ACK);
-                // change_state(STATE_CHALLENGE);
                 break;
             }
         }
-        // else
-        // {
-        //     switch (user_request)
-        //     {
-        //     case REQUEST_REGISTER_PHONE:
-        //         sendReply(ACK);
-        //         change_state(STATE_KEY_EXCHANGE);
-        //         break;
-        //     default: // REQUEST_NOTHING and other unimplemented feature (e.g. register)
-        //         sendReply(NACK);
-        //         break;
-        //     }
-        // }
+        else
+        {
+            switch (user_request)
+            {
+            case REQUEST_REGISTER_PHONE:
+                sendReply(ACK);
+                change_state(STATE_KEY_EXCHANGE);
+                break;
+            default: // REQUEST_NOTHING and other unimplemented feature (e.g. register)
+                sendReply(NACK);
+                break;
+            }
+        }
         break;
     case EVENT_S_INPUT:
         writeBT(param);
@@ -470,10 +488,13 @@ static void state_new_pin(const bt_buffer *param)
         init_bt_buffer(&pin);
         if (decryptBT(param, &pin) == BT_SUCCESS)
         {
-            if (storePIN(&pin) == BT_SUCCESS)
+            if (storeCredential(&pin, &client) == BT_SUCCESS)
             {
-                set_user_pin((const uint8_t *)&pin.data, pin.len);
-                sendReply(ACK);
+                if (load_user_cred((const uint8_t *)&pin.data, pin.len,
+                                   (const uint8_t *)&client.data, client.len) == BT_SUCCESS)
+                    sendReply(ACK);
+                else
+                    sendReply(NACK);
             }
             else
                 sendReply(NACK);
@@ -538,7 +559,55 @@ static void state_alarm(const bt_buffer *param)
 
 static void state_key_exchange(const bt_buffer *param)
 {
-    // TODO("Implement the state")
+    static uint8_t keybuf[1024];
+    static size_t keylen;
+    switch (param->event)
+    {
+    case EVENT_TRANSITION:
+        keylen = 0;
+        for (int i = 0; i < 1024; i++)
+        {
+            keybuf[i] = 0;
+        }
+        break;
+    case EVENT_BT_INPUT:
+        // All PK bytes have been received, load the PK, generate the AES symkey, and send it over an encrypted channel
+        if (keylen >= BT_RSA_PK_KEYLEN)
+        {
+            keylen++;
+            keybuf[keylen] = '\0';
+            // Load PK
+            if ((loadPK(keybuf, keylen) == BT_SUCCESS) &&
+                (generateNonce(&nonce) == BT_SUCCESS))
+            {
+                if (setCipherkey(&nonce) == BT_SUCCESS)
+                {
+                    writeBTRSA(&nonce);
+                    delay(20);
+                    sendReply(ACK);
+                    change_state(STATE_NEW_PIN);
+                }
+                else
+                {
+                    sendReply(NACK);
+                    change_state(STATE_CONNECT);
+                }
+            }
+            else
+            {
+                sendReply(NACK);
+                change_state(STATE_CONNECT);
+            }
+        }
+        else
+        {
+            keylen += param->len;
+            memcpy(keybuf, param->data, param->len);
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 static void state_register(const bt_buffer *param)

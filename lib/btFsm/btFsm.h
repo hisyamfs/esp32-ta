@@ -14,6 +14,8 @@
 #define BT_ENABLE 1
 #define BT_DISABLE 0
 #define BT_ADDR_LEN 6
+#define BT_RSA_PK_KEYLEN 449
+#define BT_NUM_STATES 12
 
 typedef enum BTReply
 {
@@ -80,8 +82,11 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
                int (*sendReplyImp)(bt_reply),
                int (*writeBTImp)(const bt_buffer *),
                int (*decryptBTImp)(const bt_buffer *, bt_buffer *),
-               int (*storePINImp)(bt_buffer *),
+               int (*storeCredentialImp)(bt_buffer *, bt_buffer *),
                int (*deleteStoredCredentialImp)(void),
+               int (*loadPKImp)(uint8_t *, size_t),
+               int (*setCipherkeyImp)(const bt_buffer *),
+               int (*writeBTRSAImp)(const bt_buffer *),
                int (*setAlarmImp)(int, int),
                int (*unpairBlacklistImp)(const bt_buffer *),
                void (*setImmobilizerImp)(int),
