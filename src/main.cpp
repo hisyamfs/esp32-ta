@@ -82,7 +82,6 @@ void setup()
 		};
 	}
 
-	
 	if (!SPIFFS.begin(true))
 	{
 		Serial.println("An Error has occurred while mounting SPIFFS");
@@ -128,7 +127,7 @@ void setup()
 	Serial.println("Stored ID: ");
 	Serial.write((const unsigned char *)uidbuf, id_len);
 	Serial.println();
-	printBytes((const uint8_t*) uidbuf, id_len, NULL, 0);
+	printBytes((const uint8_t *)uidbuf, id_len, NULL, 0);
 
 	Serial.println("Stored PIN: ");
 	Serial.write((const unsigned char *)upinbuf, pin_len);
@@ -163,7 +162,7 @@ void setup()
 
 	SerialBT.onData(onBTInputInterface);
 	esp_err_t cb_ret = SerialBT.register_callback(custom_callback);
-	if (cb_ret != ESP_OK) 
+	if (cb_ret != ESP_OK)
 	{
 		Serial.println("Custom callback init failed!");
 		exit();
@@ -483,5 +482,14 @@ void onBTInputInterface(const uint8_t *buffer, size_t blen)
 		Serial.println();
 		printBytes(buffer, blen, NULL, 0);
 	}
-	onBTInput(buffer, blen);
+	if (blen <= BT_BUF_LEN_BYTE)
+		onBTInput(buffer, blen);
+	else
+	{
+		for (size_t i = 0; i < blen; i += BT_BUF_LEN_BYTE)
+		{
+			size_t k = (blen - i > BT_BUF_LEN_BYTE) ? BT_BUF_LEN_BYTE : (blen - i);
+			onBTInput(buffer + i, k);
+		}
+	}
 }

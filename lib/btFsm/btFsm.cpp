@@ -113,7 +113,9 @@ void onBTInput(const uint8_t *input_data, size_t input_len)
     bt_buffer bt_input;
     bt_input.event = EVENT_BT_INPUT;
     bt_input.len = input_len;
-    memcpy(&bt_input.data, input_data, input_len);
+    if (bt_input.len > BT_BUF_LEN_BYTE)
+        bt_input.len = BT_BUF_LEN_BYTE;
+    memcpy(&bt_input.data, input_data, bt_input.len);
     run_btFsm(&bt_input);
 }
 
@@ -122,7 +124,9 @@ void onSInput(const uint8_t *input_data, size_t input_len)
     bt_buffer s_input;
     s_input.event = EVENT_S_INPUT;
     s_input.len = input_len;
-    memcpy(&s_input.data, input_data, input_len);
+    if (s_input.len > BT_BUF_LEN_BYTE)
+        s_input.len = BT_BUF_LEN_BYTE;
+    memcpy(&s_input.data, input_data, s_input.len);
     run_btFsm(&s_input);
 }
 
