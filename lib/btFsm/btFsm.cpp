@@ -6,6 +6,8 @@
 static bt_buffer nonce, USER_ADDR, USER_PIN, client;
 static volatile bt_request user_request;
 static volatile bt_reply IS_REGISTERED;
+static uint8_t keybuf[1024];
+static size_t keylen;
 
 /* State function, implements each state */
 static void state_err(const bt_buffer *param);
@@ -226,11 +228,11 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
     loadPK = loadPKImp;
     if (loadPK == nullptr)
         return BT_FAIL;
-    
+
     setCipherkey = setCipherkeyImp;
     if (setCipherkey == nullptr)
         return BT_FAIL;
-        
+
     writeBTRSA = writeBTRSAImp;
     if (writeBTRSA == nullptr)
         return BT_FAIL;
@@ -250,6 +252,12 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
     handleError = handleErrorImp;
     if (handleError == nullptr)
         return BT_FAIL;
+
+    keylen = 0;
+    for (int i = 0; i < 1024; i++)
+    {
+        keybuf[i] = 0;
+    }
 
     current_state = STATE_DISCONNECT;
     announceState(current_state);
@@ -522,17 +530,14 @@ static void state_delete(const bt_buffer *param)
     case EVENT_TRANSITION:
         if (deleteStoredCredential() == BT_SUCCESS)
         {
-            sendReply(ACK);
             init_bt_buffer(&USER_PIN);
             init_bt_buffer(&USER_ADDR);
             IS_REGISTERED = NACK;
-            change_state(STATE_CONNECT);
+            sendReply(ACK);
         }
         else
-        {
             sendReply(NACK);
-            change_state(STATE_CONNECT);
-        }
+        change_state(STATE_CONNECT);
         break;
     default:
         break;
@@ -559,39 +564,31 @@ static void state_alarm(const bt_buffer *param)
 
 static void state_key_exchange(const bt_buffer *param)
 {
-    static uint8_t keybuf[1024];
-    static size_t keylen;
     switch (param->event)
     {
     case EVENT_TRANSITION:
         keylen = 0;
-        for (int i = 0; i < 1024; i++)
-        {
-            keybuf[i] = 0;
-        }
+        // setAlarm(BT_ENABLE, 500);
         break;
     case EVENT_BT_INPUT:
+        memcpy(keybuf + keylen, param->data, param->len);
+        keylen += param->len;
+        // announceState(STATE_KEY_EXCHANGE);
+        break;
+    case EVENT_TIMEOUT:
         // All PK bytes have been received, load the PK, generate the AES symkey, and send it over an encrypted channel
-        if (keylen >= BT_RSA_PK_KEYLEN)
+        keylen++;
+        keybuf[keylen] = '\0';
+        // Load PK
+        if ((loadPK(keybuf, keylen) == BT_SUCCESS) &&
+            (generateNonce(&nonce) == BT_SUCCESS))
         {
-            keylen++;
-            keybuf[keylen] = '\0';
-            // Load PK
-            if ((loadPK(keybuf, keylen) == BT_SUCCESS) &&
-                (generateNonce(&nonce) == BT_SUCCESS))
+            if (setCipherkey(&nonce) == BT_SUCCESS)
             {
-                if (setCipherkey(&nonce) == BT_SUCCESS)
-                {
-                    writeBTRSA(&nonce);
-                    delay(20);
-                    sendReply(ACK);
-                    change_state(STATE_NEW_PIN);
-                }
-                else
-                {
-                    sendReply(NACK);
-                    change_state(STATE_CONNECT);
-                }
+                writeBTRSA(&nonce);
+                delay(20);
+                sendReply(ACK);
+                change_state(STATE_NEW_PIN);
             }
             else
             {
@@ -601,8 +598,8 @@ static void state_key_exchange(const bt_buffer *param)
         }
         else
         {
-            keylen += param->len;
-            memcpy(keybuf, param->data, param->len);
+            sendReply(NACK);
+            change_state(STATE_CONNECT);
         }
         break;
     default:

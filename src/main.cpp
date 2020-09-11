@@ -111,7 +111,9 @@ void setup()
 	if (!file) // Error, credential not found
 	{
 		Serial.println("Error loading user credential...");
-		exit();
+		// exit();
+		const char *default_key = "abcdefghijklmnop";
+		memcpy(symkey, default_key, BT_BLOCK_SIZE_BYTE);
 	}
 	size_t key_len = file.available();
 	file.readBytes((char *)symkey, key_len);
@@ -234,7 +236,7 @@ void announceStateImp(fsm_state state)
 		 "STATE_ALARM",
 		 "STATE_KEY_EXCHANGE",
 		 "STATE_REGISTER"};
-	Serial.printf("%s\n", state_name[(uint) state % BT_NUM_STATES]);
+	Serial.printf("%s\n", state_name[(uint)state % BT_NUM_STATES]);
 }
 
 // TODO("Ganti agar menggunakan CTR-DRBG")
@@ -387,12 +389,21 @@ int deleteStoredCredImp(void)
 	return BT_SUCCESS;
 }
 
+void onTimeoutInterface(TimerHandle_t tmr)
+{
+	onTimeout();
+}
+
 int setAlarmImp(int enable, int duration)
 {
 	if (enable == BT_ENABLE)
 	{
-		delay(duration);
-		onTimeout();
+		int id = 1;
+		TimerHandle_t tmr = xTimerCreate("MyTimer", pdMS_TO_TICKS(duration), pdFALSE, (void *)id, &onTimeoutInterface);
+		if (xTimerStart(tmr, 10) != pdPASS)
+		{
+			return BT_FAIL;
+		}
 	}
 	return BT_SUCCESS;
 }
@@ -479,21 +490,31 @@ void setupImmobilizer()
 void onBTInputInterface(const uint8_t *buffer, size_t blen)
 {
 	if (DEBUG_MODE)
-	{
 		Serial.printf("HP: %u :\n", blen);
-		Serial.write(buffer, blen);
-		Serial.println();
-		printBytes(buffer, blen, NULL, 0);
-	}
 	if (blen <= BT_BUF_LEN_BYTE)
+	{
+		if (DEBUG_MODE)
+		{
+			Serial.write(buffer, blen);
+			Serial.println();
+			printBytes(buffer, blen, NULL, 0);
+		}
 		onBTInput(buffer, blen);
+	}
 	else
 	{
 		for (size_t i = 0; i < blen; i += BT_BUF_LEN_BYTE)
 		{
 			size_t k = (blen - i > BT_BUF_LEN_BYTE) ? BT_BUF_LEN_BYTE : (blen - i);
+			if (DEBUG_MODE)
+			{
+				Serial.write(buffer + i, k);
+				// printBytes(buffer, blen, NULL, 0);
+			}
 			onBTInput(buffer + i, k);
+			delay(20);
 		}
+		onTimeout();
 	}
 }
 
@@ -527,13 +548,18 @@ int loadPKImp(uint8_t *keybuf, size_t keylen)
 	return BT_SUCCESS;
 }
 
+// param:
+// nonce : bt_buffer berisi cipherkey yang baru
+// variable non-lokal:
+// aes : context untuk cipher AES dari mbedtls
+// symkey : array yang menyimpan cipherkey lama
 int setCipherkeyImp(const bt_buffer *nonce)
 {
 	// Load decrypt cipher dengan kunci baru
 	mbedtls_aes_free(&aes);
 	mbedtls_aes_init(&aes);
 	int kx_ret = 0;
-	if (nonce->len != BT_BLOCK_SIZE_BYTE)
+	if (nonce->len != BT_BLOCK_SIZE_BYTE) // Pastikan panjang cipherkey sesuai, 128 bit/16 byte
 		return BT_FAIL;
 	if ((kx_ret = mbedtls_aes_setkey_dec(&aes, (const uint8_t *)nonce->data, BT_BLOCK_SIZE_BIT)) != 0)
 	{
@@ -544,7 +570,37 @@ int setCipherkeyImp(const bt_buffer *nonce)
 		kx_ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char *)symkey, BT_BLOCK_SIZE_BIT);
 		return BT_FAIL;
 	}
-	return BT_SUCCESS;
+	// Simpan cipherkey terbaru di SPIFFS
+	int success = 0;
+	File file = SPIFFS.open("/userKey.txt", FILE_WRITE);
+	{
+		if (!file) // File tidak bisa dibuka
+		{
+			Serial.printf("Tidak bisa menyimpan kunci terbaru");
+			mbedtls_aes_free(&aes);
+			mbedtls_aes_init(&aes);
+			kx_ret = mbedtls_aes_setkey_dec(&aes, (const unsigned char *)symkey, BT_BLOCK_SIZE_BIT);
+		}
+		else
+		{
+			success = 1;
+			file.write((const uint8_t *)nonce->data, BT_BLOCK_SIZE_BYTE);
+			if (DEBUG_MODE)
+			{
+				Serial.println("Berhasil menyimpan kunci terbaru:");
+				printBytes((const uint8_t *)nonce->data, nonce->len, NULL, 0);
+			}
+		}
+	}
+	file.close();
+
+	if (success) // update symkey, yang menyimpan cipherkey lama
+	{
+		memcpy(symkey, nonce->data, nonce->len);
+		return BT_SUCCESS;
+	}
+	else
+		return BT_FAIL;
 }
 
 int writeBTRSAImp(const bt_buffer *out)
