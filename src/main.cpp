@@ -398,12 +398,15 @@ int setAlarmImp(int enable, int duration)
 {
 	if (enable == BT_ENABLE)
 	{
-		int id = 1;
-		TimerHandle_t tmr = xTimerCreate("MyTimer", pdMS_TO_TICKS(duration), pdFALSE, (void *)id, &onTimeoutInterface);
-		if (xTimerStart(tmr, 10) != pdPASS)
-		{
-			return BT_FAIL;
-		}
+		// Kalau pakai code dibawah, nggak tau kenapa ESP32 jadi brownout/reset
+		// int id = 1;
+		// TimerHandle_t tmr = xTimerCreate("MyTimer", pdMS_TO_TICKS(duration), pdFALSE, (void *)id, &onTimeoutInterface);
+		// if (xTimerStart(tmr, 10) != pdPASS)
+		// {
+		// 	return BT_FAIL;
+		// }
+		delay(duration);
+		onTimeout();
 	}
 	return BT_SUCCESS;
 }
