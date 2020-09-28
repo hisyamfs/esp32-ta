@@ -9,6 +9,8 @@
 #include "mbedtls/error.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/sha256.h"
+#include "freertos/timers.h"
+#include "Ticker.h"
 
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
 #error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
@@ -30,6 +32,8 @@ myBluetoothSerial SerialBT;
 mbedtls_pk_context encrypt_pk;
 mbedtls_entropy_context encrypt_entropy;
 mbedtls_ctr_drbg_context encrypt_ctr_drbg;
+
+Ticker timer;
 
 void announceStateImp(fsm_state state);
 int generateNonceImp(bt_buffer *nonce);
@@ -176,7 +180,7 @@ void setup()
 	}
 	else
 	{
-		SerialBT.begin("ESP32test");
+		SerialBT.begin("ESP32test2");
 		Serial.println("---------START----------");
 	}
 }
@@ -389,25 +393,12 @@ int deleteStoredCredImp(void)
 	return BT_SUCCESS;
 }
 
-void onTimeoutInterface(TimerHandle_t tmr)
-{
-	onTimeout();
-}
-
 int setAlarmImp(int enable, int duration)
 {
 	if (enable == BT_ENABLE)
-	{
-		// Kalau pakai code dibawah, nggak tau kenapa ESP32 jadi brownout/reset
-		// int id = 1;
-		// TimerHandle_t tmr = xTimerCreate("MyTimer", pdMS_TO_TICKS(duration), pdFALSE, (void *)id, &onTimeoutInterface);
-		// if (xTimerStart(tmr, 10) != pdPASS)
-		// {
-		// 	return BT_FAIL;
-		// }
-		delay(duration);
-		onTimeout();
-	}
+		timer.once_ms(duration, onTimeout);
+	else
+		timer.detach();
 	return BT_SUCCESS;
 }
 
