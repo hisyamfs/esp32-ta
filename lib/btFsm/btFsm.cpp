@@ -22,23 +22,26 @@ static void state_delete(const bt_buffer *param);
 static void state_alarm(const bt_buffer *param);
 static void state_key_exchange(const bt_buffer *param);
 static void state_register(const bt_buffer *param);
+static void state_unlock_disconnect(const bt_buffer *param);
 
-/* State table, holds the pointer to each state implementation */
-// typedef enum
-// {
-//     STATE_ERR = 0,
-//     STATE_DISCONNECT,
-//     STATE_CONNECT,
-//     STATE_CHALLENGE,
-//     STATE_VERIFICATION,
-//     STATE_PIN,
-//     STATE_UNLOCK,
-//     STATE_NEW_PIN,
-//     STATE_DELETE,
-//     STATE_ALARM,
-//     STATE_KEY_EXCHANGE,
-//     STATE_REGISTER
-// } fsm_state;
+/*** 
+typedef enum
+{
+    STATE_ERR = 0,
+    STATE_DISCONNECT,
+    STATE_CONNECT,
+    STATE_CHALLENGE,
+    STATE_VERIFICATION,
+    STATE_PIN,
+    STATE_UNLOCK,
+    STATE_NEW_PIN,
+    STATE_DELETE,
+    STATE_ALARM,
+    STATE_KEY_EXCHANGE,
+    STATE_REGISTER,
+    STATE_UNLOCK_DISCONNECT
+} fsm_state;
+***/
 static void (*btFsm_state_table[])(const bt_buffer *param) =
     {
         state_err,
@@ -52,7 +55,8 @@ static void (*btFsm_state_table[])(const bt_buffer *param) =
         state_delete,
         state_alarm,
         state_key_exchange,
-        state_register};
+        state_register,
+        state_unlock_disconnect};
 
 /* Holds the current and next state */
 static fsm_state current_state;
@@ -69,9 +73,11 @@ static int (*loadPK)(uint8_t *keybuf, size_t keylen) = nullptr;                 
 static int (*setCipherkey)(const bt_buffer *nonce) = nullptr;                       // Load AES Symkey for the AES-128 Cipher
 static int (*writeBTRSA)(const bt_buffer *out) = nullptr;                           // send RSA encrypted data
 static int (*setAlarm)(int enable, int duration) = nullptr;                         // sounds the alarm
+static int (*setTimeout)(int enable, int duration) = nullptr;                       // create a timer to trigger a connection timeout event
 static int (*unpairBlacklist)(const bt_buffer *client) = nullptr;                   // detect and prevent unregistered device from ever pairing again
 static void (*setImmobilizer)(int enable) = nullptr;                                // Turns immobilizer on or off
 static void (*handleError)(void) = nullptr;                                         // Error handler
+static void (*disconnect)(void) = nullptr;                                          // Disconnect bluetooth
 
 // check user id based on a buffer data. returns BT_SUCCESS if found.
 static int checkUserID(const bt_buffer *id)
@@ -95,6 +101,7 @@ static void change_state(fsm_state next_state)
     if (announceState != nullptr)
         announceState(next_state);
     current_state = next_state;
+    setTimeout(BT_DISABLE, 0); // Turn off timeout ticker
     onTransition();
 }
 
@@ -122,6 +129,13 @@ void onBTInput(const uint8_t *input_data, size_t input_len)
         bt_input.len = BT_BUF_LEN_BYTE;
     memcpy(&bt_input.data, input_data, bt_input.len);
     run_btFsm(&bt_input);
+}
+
+void onBTInputEnd()
+{
+    bt_buffer bt_input_end;
+    bt_input_end.event = EVENT_BT_INPUT_END;
+    run_btFsm(&bt_input_end);
 }
 
 void onSInput(const uint8_t *input_data, size_t input_len)
@@ -186,9 +200,11 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
                int (*setCipherkeyImp)(const bt_buffer *),
                int (*writeBTRSAImp)(const bt_buffer *),
                int (*setAlarmImp)(int, int),
+               int (*setTimeoutImp)(int, int),
                int (*unpairBlacklistImp)(const bt_buffer *),
                void (*setImmobilizerImp)(int),
-               void (*handleErrorImp)(void))
+               void (*handleErrorImp)(void),
+               void (*disconnectImp)(void))
 {
     init_bt_buffer(&nonce);
     init_bt_buffer(&USER_PIN);
@@ -241,6 +257,10 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
     if (setAlarm == nullptr)
         return BT_FAIL;
 
+    setTimeout = setTimeoutImp;
+    if (setTimeout == nullptr)
+        return BT_FAIL;
+
     unpairBlacklist = unpairBlacklistImp;
     if (unpairBlacklist == nullptr)
         return BT_FAIL;
@@ -251,6 +271,10 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
 
     handleError = handleErrorImp;
     if (handleError == nullptr)
+        return BT_FAIL;
+
+    disconnect = disconnectImp;
+    if (disconnect == nullptr)
         return BT_FAIL;
 
     keylen = 0;
@@ -378,9 +402,9 @@ static void state_verification(const bt_buffer *param)
 {
     switch (param->event)
     {
-    // case EVENT_TRANSITION:
-    //     set_timeout(500, MS); // 500 ms timeout
-    //     break;
+    case EVENT_TRANSITION:
+        setTimeout(BT_ENABLE, 5); // 5 s timeout for response
+        break;
     case EVENT_BT_INPUT:
         bt_buffer response;
         init_bt_buffer(&response);
@@ -409,7 +433,7 @@ static void state_verification(const bt_buffer *param)
         break;
     case EVENT_TIMEOUT:
         sendReply(NACK);
-        change_state(STATE_ALARM);
+        change_state(STATE_CONNECT);
         break;
     default:
         break;
@@ -420,6 +444,9 @@ static void state_pin(const bt_buffer *param)
 {
     switch (param->event)
     {
+    case EVENT_TRANSITION:
+        setTimeout(BT_ENABLE, 60); // 1 minute to enter pin
+        break;
     case EVENT_BT_INPUT:
         bt_buffer pin;
         init_bt_buffer(&pin);
@@ -428,6 +455,7 @@ static void state_pin(const bt_buffer *param)
             // compare the response with the nonce
             if (checkUserPIN(&pin) == BT_SUCCESS)
             {
+                setAlarm(BT_DISABLE, 0);
                 sendReply(ACK);
                 fsm_state next_state = STATE_CONNECT;
                 switch (user_request)
@@ -464,6 +492,10 @@ static void state_pin(const bt_buffer *param)
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
         break;
+    case EVENT_TIMEOUT:
+        sendReply(NACK);
+        change_state(STATE_CONNECT);
+        break;
     default:
         break;
     }
@@ -474,13 +506,68 @@ static void state_unlock(const bt_buffer *param)
     switch (param->event)
     {
     case EVENT_TRANSITION:
+    {
         setImmobilizer(BT_DISABLE);
         break;
-    case EVENT_S_INPUT:
+    }
+    case EVENT_BT_INPUT:
+    {
+        user_request = parse_request(param);
+        // TODO: Buat agar disini baca kondisi mesin beneran
+        int is_engine_off = BT_SUCCESS;
+        // request unlock berfungsi sbg toggle pada state unlock
+        if (user_request == REQUEST_UNLOCK && is_engine_off == BT_SUCCESS)
+        {
+            setImmobilizer(BT_ENABLE);
+            sendReply(ACK);
+            change_state(STATE_CONNECT);
+        }
+        else
+        {
+            sendReply(NACK);
+        }
+        break;
+    }
+    case EVENT_S_INPUT: // For debugging
     case EVENT_ENGINE_OFF:
+    {
         setImmobilizer(BT_ENABLE);
         sendReply(ACK);
         change_state(STATE_CONNECT);
+        break;
+    }
+    case EVENT_BT_DISCONNECT:
+    {
+        change_state(STATE_UNLOCK_DISCONNECT);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static void state_unlock_disconnect(const bt_buffer *param)
+{
+    switch (param->event)
+    {
+    case EVENT_BT_CONNECT:
+        if (checkUserID(param) != BT_SUCCESS)
+        {
+            sendReply(NACK);
+            // block the client from ever pairing again
+            unpairBlacklist(param);
+        }
+        else // the client is of registered addres
+        {
+            client.len = BT_ADDR_LEN;
+            memcpy(&client.data, param->data, client.len);
+            sendReply(ACK_UNL);
+            change_state(STATE_UNLOCK);
+        }
+        break;
+    case EVENT_S_INPUT:
+    case EVENT_ENGINE_OFF:
+        change_state(STATE_DISCONNECT);
         break;
     default:
         break;
@@ -549,13 +636,11 @@ static void state_alarm(const bt_buffer *param)
     switch (param->event)
     {
     case EVENT_TRANSITION:
-        setAlarm(BT_ENABLE, 3000);
-        break;
-    case EVENT_S_INPUT:
-    case EVENT_TIMEOUT:
-        setAlarm(BT_DISABLE, 0);
-        sendReply(ACK);
+        setAlarm(BT_ENABLE, BT_ALARM_DURATION_SEC);
         change_state(STATE_CONNECT);
+        break;
+    case EVENT_BT_DISCONNECT:
+        change_state(STATE_DISCONNECT);
         break;
     default:
         break;
@@ -575,7 +660,7 @@ static void state_key_exchange(const bt_buffer *param)
         keylen += param->len;
         // announceState(STATE_KEY_EXCHANGE);
         break;
-    case EVENT_TIMEOUT:
+    case EVENT_BT_INPUT_END:
         // All PK bytes have been received, load the PK, generate the AES symkey, and send it over an encrypted channel
         keylen++;
         keybuf[keylen] = '\0';

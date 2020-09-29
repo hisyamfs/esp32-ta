@@ -33,7 +33,7 @@ mbedtls_pk_context encrypt_pk;
 mbedtls_entropy_context encrypt_entropy;
 mbedtls_ctr_drbg_context encrypt_ctr_drbg;
 
-Ticker timer;
+Ticker alarm_ticker, timeout_ticker;
 
 void announceStateImp(fsm_state state);
 int generateNonceImp(bt_buffer *nonce);
@@ -46,10 +46,11 @@ int loadPKImp(uint8_t *keybuf, size_t keylen); // Load RSA Pubkey for the RSA Ci
 int setCipherkeyImp(const bt_buffer *nonce);   // Load AES Symkey for the AES-128 Cipher
 int writeBTRSAImp(const bt_buffer *out);
 int setAlarmImp(int enable, int duration);
+int setTimeoutImp(int enable, int duration);
 int unpairBlacklistImp(const bt_buffer *client);
 void setImmobilizerImp(int enable);
 void exit(void);
-
+void disconnectImp();
 void setupImmobilizer();
 void enableImmobilizer();
 void disableImmobilizer();
@@ -80,9 +81,11 @@ void setup()
 					 setCipherkeyImp,
 					 writeBTRSAImp,
 					 setAlarmImp,
+					 setTimeoutImp,
 					 unpairBlacklistImp,
 					 setImmobilizerImp,
-					 exit);
+					 exit,
+					 disconnectImp);
 	if (ret != BT_SUCCESS)
 	{
 		Serial.println("State machine init failed.");
@@ -239,7 +242,8 @@ void announceStateImp(fsm_state state)
 		 "STATE_DELETE",
 		 "STATE_ALARM",
 		 "STATE_KEY_EXCHANGE",
-		 "STATE_REGISTER"};
+		 "STATE_REGISTER",
+		 "STATE_UNLOCK_DISCONNECT"};
 	Serial.printf("%s\n", state_name[(uint)state % BT_NUM_STATES]);
 }
 
@@ -393,12 +397,35 @@ int deleteStoredCredImp(void)
 	return BT_SUCCESS;
 }
 
+void toggleAlarm(int enable)
+{
+	if (enable == BT_ENABLE)
+		Serial.printf("ALARM ON!!!!\n");
+	else
+		Serial.printf("ALARM OFF!!!\n");
+}
+
 int setAlarmImp(int enable, int duration)
 {
 	if (enable == BT_ENABLE)
-		timer.once_ms(duration, onTimeout);
+	{
+		toggleAlarm(BT_ENABLE);
+		alarm_ticker.once(duration, toggleAlarm, BT_DISABLE);
+	}
 	else
-		timer.detach();
+	{
+		toggleAlarm(BT_DISABLE);
+		alarm_ticker.detach();
+	}
+	return BT_SUCCESS;
+}
+
+int setTimeoutImp(int enable, int duration)
+{
+	if (enable == BT_ENABLE)
+		timeout_ticker.once(duration, onTimeout);
+	else
+		timeout_ticker.detach();
 	return BT_SUCCESS;
 }
 
@@ -429,6 +456,11 @@ void exit(void)
 	while (true)
 	{
 	}
+}
+
+void disconnectImp(void)
+{
+	SerialBT.disconnect();
 }
 
 void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len)
@@ -508,7 +540,7 @@ void onBTInputInterface(const uint8_t *buffer, size_t blen)
 			onBTInput(buffer + i, k);
 			delay(20);
 		}
-		onTimeout();
+		onBTInputEnd();
 	}
 }
 

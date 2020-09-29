@@ -15,13 +15,16 @@
 #define BT_DISABLE 0
 #define BT_ADDR_LEN 6
 #define BT_RSA_PK_KEYLEN 449
-#define BT_NUM_STATES 12
+#define BT_NUM_STATES 13
+#define BT_ALARM_DURATION_SEC 5
+#define BT_REPLY_TIMEOUT_SEC 60
 
 typedef enum BTReply
 {
     NACK = '0',
     ACK = '1',
-    ERR = '2'
+    ERR = '2',
+    ACK_UNL = '3'
 } bt_reply;
 
 typedef enum BTRequest
@@ -38,6 +41,7 @@ typedef enum BTEvent
 {
     EVENT_TRANSITION,
     EVENT_BT_INPUT,
+    EVENT_BT_INPUT_END,
     EVENT_BT_OUTPUT,
     EVENT_BT_CONNECT,
     EVENT_BT_DISCONNECT,
@@ -70,7 +74,8 @@ typedef enum
     STATE_DELETE,
     STATE_ALARM,
     STATE_KEY_EXCHANGE,
-    STATE_REGISTER
+    STATE_REGISTER,
+    STATE_UNLOCK_DISCONNECT
 } fsm_state;
 
 /* Initialize bt_buffer structure */
@@ -88,9 +93,11 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
                int (*setCipherkeyImp)(const bt_buffer *),
                int (*writeBTRSAImp)(const bt_buffer *),
                int (*setAlarmImp)(int, int),
+               int (*setTimeoutImp)(int, int),
                int (*unpairBlacklistImp)(const bt_buffer *),
                void (*setImmobilizerImp)(int),
-               void (*handleErrorImp)(void));
+               void (*handleErrorImp)(void),
+               void (*disconnectImp)(void));
 
 /* Check if two buffer store the same data */
 int compareBT(const bt_buffer *buf1, const bt_buffer *buf2);
@@ -100,6 +107,7 @@ bt_request parse_request(const bt_buffer *buffer);
 
 /* FSM events */
 void onBTInput(const uint8_t *data, size_t len);
+void onBTInputEnd();
 void onSInput(const uint8_t *data, size_t len);
 void onEngineOff();
 void onTimeout();
