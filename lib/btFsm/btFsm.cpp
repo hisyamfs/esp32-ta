@@ -578,6 +578,9 @@ static void state_new_pin(const bt_buffer *param)
 {
     switch (param->event)
     {
+    case EVENT_TRANSITION:
+        setTimeout(BT_ENABLE, 60); // 60 s timeout to enter new pin
+        break;
     case EVENT_BT_INPUT:
         bt_buffer pin;
         init_bt_buffer(&pin);
@@ -603,6 +606,10 @@ static void state_new_pin(const bt_buffer *param)
         break;
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
+        break;
+    case EVENT_TIMEOUT:
+        sendReply(NACK);
+        change_state(STATE_CONNECT);
         break;
     default:
         break;
@@ -653,7 +660,7 @@ static void state_key_exchange(const bt_buffer *param)
     {
     case EVENT_TRANSITION:
         keylen = 0;
-        // setAlarm(BT_ENABLE, 500);
+        setTimeout(BT_ENABLE, 60); // 60 s timeout for the phone to send it's public key
         break;
     case EVENT_BT_INPUT:
         memcpy(keybuf + keylen, param->data, param->len);
@@ -686,6 +693,13 @@ static void state_key_exchange(const bt_buffer *param)
             sendReply(NACK);
             change_state(STATE_CONNECT);
         }
+        break;
+    case EVENT_TIMEOUT:
+        sendReply(NACK);
+        change_state(STATE_CONNECT);
+        break;
+    case EVENT_BT_DISCONNECT:
+        change_state(STATE_DISCONNECT);
         break;
     default:
         break;
