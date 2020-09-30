@@ -100,8 +100,8 @@ static void change_state(fsm_state next_state)
     delay(20);
     if (announceState != nullptr)
         announceState(next_state);
+    setTimeout(BT_DISABLE, 0);
     current_state = next_state;
-    setTimeout(BT_DISABLE, 0); // Turn off timeout ticker
     onTransition();
 }
 

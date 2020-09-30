@@ -407,25 +407,45 @@ void toggleAlarm(int enable)
 
 int setAlarmImp(int enable, int duration)
 {
-	if (enable == BT_ENABLE)
+	static int is_active = BT_DISABLE; // Ticker aktif?
+	if (is_active == BT_ENABLE)
 	{
-		toggleAlarm(BT_ENABLE);
-		alarm_ticker.once(duration, toggleAlarm, BT_DISABLE);
-	}
-	else
-	{
+		#if DEBUG_MODE==1
+		Serial.printf("Alarm ticker off\n");
+		#endif // DEBUG_MODE
 		toggleAlarm(BT_DISABLE);
 		alarm_ticker.detach();
 	}
+	if (enable == BT_ENABLE)
+	{
+		#if DEBUG_MODE==1
+		Serial.printf("Alarm ticker on\n");
+		#endif // DEBUG_MODE
+		toggleAlarm(BT_ENABLE);
+		alarm_ticker.once(duration, toggleAlarm, BT_DISABLE);
+	}
+	is_active = enable;
 	return BT_SUCCESS;
 }
 
 int setTimeoutImp(int enable, int duration)
 {
-	if (enable == BT_ENABLE)
-		timeout_ticker.once(duration, onTimeout);
-	else
+	static int is_active = BT_DISABLE; // Ticker aktif?
+	if (is_active == BT_ENABLE)
+	{
+		#if DEBUG_MODE==1
+		Serial.printf("Timeout ticker off\n");
+		#endif // DEBUG_MODE
 		timeout_ticker.detach();
+	}
+	if (enable == BT_ENABLE)
+	{
+		#if DEBUG_MODE==1
+		Serial.printf("Timeout ticker on\n");
+		#endif // DEBUG
+		timeout_ticker.attach(duration, onTimeout);
+	}
+	is_active = enable;
 	return BT_SUCCESS;
 }
 
