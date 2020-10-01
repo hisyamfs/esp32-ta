@@ -48,7 +48,7 @@ typedef enum BTEvent
     EVENT_TIMEOUT,
     EVENT_ERROR,
     EVENT_ALARM_OFF,
-    EVENT_ENGINE_OFF,
+    EVENT_ENGINE,
     EVENT_S_INPUT, // for debugging purposes
     EVENT_SET_CREDENTIAL
 } bt_event;
@@ -109,7 +109,7 @@ bt_request parse_request(const bt_buffer *buffer);
 void onBTInput(const uint8_t *data, size_t len);
 void onBTInputEnd();
 void onSInput(const uint8_t *data, size_t len);
-void onEngineOff();
+void onEngineEvent(int data);
 void onTimeout();
 void onBTConnect(const uint8_t *addr, size_t len);
 void onBTDisconnect(const uint8_t *addr, size_t len);

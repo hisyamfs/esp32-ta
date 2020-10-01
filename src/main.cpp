@@ -17,6 +17,7 @@
 #endif
 
 #define LED 2
+#define ENGINE 4
 #define PRINT_RESULT 1
 #define NO_PRINT 0
 #define USE_SHA_256 0
@@ -51,6 +52,9 @@ int unpairBlacklistImp(const bt_buffer *client);
 void setImmobilizerImp(int enable);
 void exit(void);
 void disconnectImp();
+
+void setupKeyInput();
+void readKeyInput();
 void setupImmobilizer();
 void enableImmobilizer();
 void disableImmobilizer();
@@ -60,6 +64,25 @@ void printError(int errcode);
 void onBTInputInterface(const uint8_t *buffer, size_t blen);
 void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 
+// Baca posisi kunci motor pengguna
+void setupKeyInput()
+{
+	pinMode(ENGINE, INPUT_PULLUP);
+}
+
+void readKeyInput()
+{
+	// TODO("Ganti dengan interrupt")
+	static int prev_val = HIGH;
+	int current_val;
+	current_val = digitalRead(ENGINE);
+	if (current_val != prev_val)
+	{
+		onEngineEvent(current_val);
+		prev_val = current_val;
+	}
+}
+
 void setup()
 {
 	int ret = 0;
@@ -68,6 +91,7 @@ void setup()
 	Serial.println("Initializing immobilizer....");
 	setupImmobilizer();
 	setImmobilizerImp(BT_ENABLE);
+	setupKeyInput();
 
 	Serial.println("Initializing state machine....");
 	ret = init_btFsm(announceStateImp,
@@ -197,6 +221,7 @@ void loop()
 		Serial.readBytes(sbuf, slen);
 		onSInput((const uint8_t *)sbuf, slen);
 	}
+	readKeyInput();
 	delay(20);
 }
 
@@ -410,17 +435,17 @@ int setAlarmImp(int enable, int duration)
 	static int is_active = BT_DISABLE; // Ticker aktif?
 	if (is_active == BT_ENABLE)
 	{
-		#if DEBUG_MODE==1
+#if DEBUG_MODE == 1
 		Serial.printf("Alarm ticker off\n");
-		#endif // DEBUG_MODE
+#endif // DEBUG_MODE
 		toggleAlarm(BT_DISABLE);
 		alarm_ticker.detach();
 	}
 	if (enable == BT_ENABLE)
 	{
-		#if DEBUG_MODE==1
+#if DEBUG_MODE == 1
 		Serial.printf("Alarm ticker on\n");
-		#endif // DEBUG_MODE
+#endif // DEBUG_MODE
 		toggleAlarm(BT_ENABLE);
 		alarm_ticker.once(duration, toggleAlarm, BT_DISABLE);
 	}
@@ -433,16 +458,16 @@ int setTimeoutImp(int enable, int duration)
 	static int is_active = BT_DISABLE; // Ticker aktif?
 	if (is_active == BT_ENABLE)
 	{
-		#if DEBUG_MODE==1
+#if DEBUG_MODE == 1
 		Serial.printf("Timeout ticker off\n");
-		#endif // DEBUG_MODE
+#endif // DEBUG_MODE
 		timeout_ticker.detach();
 	}
 	if (enable == BT_ENABLE)
 	{
-		#if DEBUG_MODE==1
+#if DEBUG_MODE == 1
 		Serial.printf("Timeout ticker on\n");
-		#endif // DEBUG
+#endif // DEBUG
 		timeout_ticker.attach(duration, onTimeout);
 	}
 	is_active = enable;

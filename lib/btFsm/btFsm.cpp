@@ -149,12 +149,14 @@ void onSInput(const uint8_t *input_data, size_t input_len)
     run_btFsm(&s_input);
 }
 
-void onEngineOff()
+void onEngineEvent(int data)
 {
-    bt_buffer engine_off;
-    init_bt_buffer(&engine_off);
-    engine_off.event = EVENT_ENGINE_OFF;
-    run_btFsm(&engine_off);
+    bt_buffer engine_data;
+    init_bt_buffer(&engine_data);
+    engine_data.event = EVENT_ENGINE;
+    engine_data.len = 1;
+    engine_data.data[0] = data;
+    run_btFsm(&engine_data);
 }
 
 void onTimeout()
@@ -529,7 +531,7 @@ static void state_unlock(const bt_buffer *param)
         break;
     }
     case EVENT_S_INPUT: // For debugging
-    case EVENT_ENGINE_OFF:
+    case EVENT_ENGINE:
     {
         setImmobilizer(BT_ENABLE);
         sendReply(ACK);
@@ -566,7 +568,7 @@ static void state_unlock_disconnect(const bt_buffer *param)
         }
         break;
     case EVENT_S_INPUT:
-    case EVENT_ENGINE_OFF:
+    case EVENT_ENGINE:
         change_state(STATE_DISCONNECT);
         break;
     default:
