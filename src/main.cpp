@@ -219,10 +219,10 @@ void setup()
 			String id = "ImmobilizerITB-";
 			for (int i = 0; i < 6; i++)
 				id.concat(String(mac[i], HEX));
-			SerialBT.begin(id, false, false);
+			SerialBT.begin(id, false, true);
 		}
 		Serial.println("---------START----------");
-		// onTransition();
+		onTransition();
 	}
 
 	// Test
