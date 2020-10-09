@@ -97,7 +97,8 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
                int (*unpairBlacklistImp)(const bt_buffer *),
                void (*setImmobilizerImp)(int),
                void (*handleErrorImp)(void),
-               void (*disconnectImp)(void));
+               void (*disconnectImp)(void),
+               int (*setDiscoverabilityImp)(int));
 
 /* Check if two buffer store the same data */
 int compareBT(const bt_buffer *buf1, const bt_buffer *buf2);

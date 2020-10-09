@@ -78,6 +78,7 @@ static int (*unpairBlacklist)(const bt_buffer *client) = nullptr;               
 static void (*setImmobilizer)(int enable) = nullptr;                                // Turns immobilizer on or off
 static void (*handleError)(void) = nullptr;                                         // Error handler
 static void (*disconnect)(void) = nullptr;                                          // Disconnect bluetooth
+static int (*setDiscoverability)(int) = nullptr;                                    // Set device discoverability
 
 // check user id based on a buffer data. returns BT_SUCCESS if found.
 static int checkUserID(const bt_buffer *id)
@@ -206,7 +207,8 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
                int (*unpairBlacklistImp)(const bt_buffer *),
                void (*setImmobilizerImp)(int),
                void (*handleErrorImp)(void),
-               void (*disconnectImp)(void))
+               void (*disconnectImp)(void),
+               int (*setDiscoverabilityImp)(int))
 {
     init_bt_buffer(&nonce);
     init_bt_buffer(&USER_PIN);
@@ -279,6 +281,10 @@ int init_btFsm(void (*announceStateImp)(fsm_state),
     if (disconnect == nullptr)
         return BT_FAIL;
 
+    setDiscoverability = setDiscoverabilityImp;
+    if (setDiscoverability == nullptr)
+        return BT_FAIL;
+
     keylen = 0;
     for (int i = 0; i < 1024; i++)
     {
@@ -308,6 +314,7 @@ static void state_disconnect(const bt_buffer *param)
     switch (param->event)
     {
     case EVENT_BT_CONNECT:
+    {
         if ((IS_REGISTERED == ACK) && (checkUserID(param) != BT_SUCCESS))
         {
             sendReply(NACK);
@@ -322,9 +329,16 @@ static void state_disconnect(const bt_buffer *param)
             change_state(STATE_CONNECT);
         }
         break;
-    // case EVENT_TRANSITION:
-    //     close_connection();
-    //     break;
+    }
+    case EVENT_TRANSITION:
+    {
+        int enable = BT_ENABLE;
+        if (IS_REGISTERED == ACK)
+            enable = BT_DISABLE;
+        if (setDiscoverability(enable) != BT_SUCCESS)
+            change_state(STATE_ERR);
+        break;
+    }
     default:
         break;
     }
@@ -629,6 +643,7 @@ static void state_delete(const bt_buffer *param)
             init_bt_buffer(&USER_PIN);
             init_bt_buffer(&USER_ADDR);
             IS_REGISTERED = NACK;
+            setDiscoverability(BT_ENABLE);
             sendReply(ACK);
         }
         else

@@ -18,7 +18,7 @@ public:
     myBluetoothSerial(void);
     ~myBluetoothSerial(void);
 
-    bool begin(String localName = String(), bool isMaster = false);
+    bool begin(String localName = String(), bool isMaster = false, bool isDiscoverable = true);
     int available(void);
     int peek(void);
     bool hasClient(void);
@@ -32,6 +32,7 @@ public:
 
     void enableSSP();
     bool setPin(const char *pin);
+    bool setDiscoverability(bool isDiscoverable);
     bool connect(String remoteName);
     bool connect(uint8_t remoteAddress[]);
     bool connect();

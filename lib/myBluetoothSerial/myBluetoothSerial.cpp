@@ -49,6 +49,7 @@ static esp_bt_pin_code_t _pin_code;
 static int _pin_len;
 static bool _isPinSet;
 static bool _enableSSP;
+static esp_bt_scan_mode_t _discovery_mode;
 
 #define SPP_RUNNING 0x01
 #define SPP_CONNECTED 0x02
@@ -562,6 +563,12 @@ static bool _init_bt(const char *deviceName)
         }
     }
 
+    if (esp_bt_gap_set_scan_mode(_discovery_mode) != ESP_OK) 
+    {
+        log_e("set discoverability failed");
+        return false;
+    }
+
     if (_isMaster && esp_bt_gap_register_callback(esp_bt_gap_cb) != ESP_OK)
     {
         log_e("gap register failed");
@@ -681,9 +688,14 @@ myBluetoothSerial::~myBluetoothSerial(void)
     _stop_bt();
 }
 
-bool myBluetoothSerial::begin(String localName, bool isMaster)
+bool myBluetoothSerial::begin(String localName, bool isMaster, bool isDiscoverable)
 {
     _isMaster = isMaster;
+    if (isDiscoverable)
+        _discovery_mode = ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE;
+    else
+        _discovery_mode = ESP_BT_SCAN_MODE_CONNECTABLE;
+
     if (localName.length())
     {
         local_name = localName;
@@ -794,6 +806,14 @@ bool myBluetoothSerial::setPin(const char *pin)
         btSetPin();
     }
     return true;
+}
+
+bool myBluetoothSerial::setDiscoverability(bool isDiscoverable) {
+    if (isDiscoverable)
+        _discovery_mode = ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE;
+    else
+        _discovery_mode = ESP_BT_SCAN_MODE_CONNECTABLE;
+    return (esp_bt_gap_set_scan_mode(_discovery_mode) == ESP_OK);
 }
 
 bool myBluetoothSerial::connect(String remoteName)

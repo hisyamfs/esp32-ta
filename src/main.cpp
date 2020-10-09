@@ -11,6 +11,7 @@
 #include "mbedtls/sha256.h"
 #include "freertos/timers.h"
 #include "Ticker.h"
+#include "esp_spp_api.h"
 
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
 #error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
@@ -52,6 +53,7 @@ int unpairBlacklistImp(const bt_buffer *client);
 void setImmobilizerImp(int enable);
 void exit(void);
 void disconnectImp();
+int setDiscoverabilityImp(int enable);
 
 void setupKeyInput();
 void readKeyInput();
@@ -109,7 +111,8 @@ void setup()
 					 unpairBlacklistImp,
 					 setImmobilizerImp,
 					 exit,
-					 disconnectImp);
+					 disconnectImp,
+					 setDiscoverabilityImp);
 	if (ret != BT_SUCCESS)
 	{
 		Serial.println("State machine init failed.");
@@ -207,9 +210,23 @@ void setup()
 	}
 	else
 	{
-		SerialBT.begin("ESP32test2");
+		uint8_t mac[6];
+		if (esp_efuse_mac_get_default(mac) != ESP_OK)
+			SerialBT.begin("ImmobilizerITB-01");
+		else
+		{
+			// Use MAC address as unique Immobilizer ID to advertise the connection
+			String id = "ImmobilizerITB-";
+			for (int i = 0; i < 6; i++)
+				id.concat(String(mac[i], HEX));
+			SerialBT.begin(id, false, false);
+		}
 		Serial.println("---------START----------");
+		// onTransition();
 	}
+
+	// Test
+	// SerialBT.setDiscoverability(false);
 }
 
 void loop()
@@ -221,7 +238,7 @@ void loop()
 		Serial.readBytes(sbuf, slen);
 		onSInput((const uint8_t *)sbuf, slen);
 	}
-	readKeyInput();
+	// readKeyInput();
 	delay(20);
 }
 
@@ -698,4 +715,12 @@ int writeBTRSAImp(const bt_buffer *out)
 		SerialBT.write(encrypted, elen);
 		return 0;
 	}
+}
+
+int setDiscoverabilityImp(int enable)
+{
+	if (SerialBT.setDiscoverability(enable == BT_ENABLE))
+		return BT_SUCCESS;
+	else
+		return BT_FAIL;
 }
