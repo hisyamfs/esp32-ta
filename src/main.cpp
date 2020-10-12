@@ -55,6 +55,27 @@ void exit(void);
 void disconnectImp();
 int setDiscoverabilityImp(int enable);
 
+fsm_interface m_interface = 
+{
+	.announceStateImp = announceStateImp,
+	.generateNonceImp = generateNonceImp,
+	.sendReplyImp = sendReplyImp,
+	.writeBTImp = writeBTImp,
+	.decryptBTImp = decryptBTImp,
+	.storeCredentialImp = storeCredentialImp,
+	.deleteStoredCredentialImp = deleteStoredCredImp,
+	.loadPKImp = loadPKImp,
+	.setCipherkeyImp = setCipherkeyImp,
+	.writeBTRSAImp = writeBTRSAImp,
+	.setAlarmImp = setAlarmImp,
+	.setTimeoutImp = setTimeoutImp,
+	.unpairBlacklistImp = unpairBlacklistImp,
+	.setImmobilizerImp = setImmobilizerImp,
+	.handleErrorImp = exit,
+	.disconnectImp = disconnectImp,
+	.setDiscoverabilityImp = setDiscoverabilityImp
+};
+
 void setupKeyInput();
 void readKeyInput();
 void setupImmobilizer();
@@ -96,23 +117,7 @@ void setup()
 	setupKeyInput();
 
 	Serial.println("Initializing state machine....");
-	ret = init_btFsm(announceStateImp,
-					 generateNonceImp,
-					 sendReplyImp,
-					 writeBTImp,
-					 decryptBTImp,
-					 storeCredentialImp,
-					 deleteStoredCredImp,
-					 loadPKImp,
-					 setCipherkeyImp,
-					 writeBTRSAImp,
-					 setAlarmImp,
-					 setTimeoutImp,
-					 unpairBlacklistImp,
-					 setImmobilizerImp,
-					 exit,
-					 disconnectImp,
-					 setDiscoverabilityImp);
+	ret = init_btFsm(&m_interface);
 	if (ret != BT_SUCCESS)
 	{
 		Serial.println("State machine init failed.");
@@ -219,7 +224,7 @@ void setup()
 			String id = "ImmobilizerITB-";
 			for (int i = 0; i < 6; i++)
 				id.concat(String(mac[i], HEX));
-			SerialBT.begin(id, false, true);
+			SerialBT.begin(id, false, false);
 		}
 		Serial.println("---------START----------");
 		onTransition();
