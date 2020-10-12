@@ -27,10 +27,10 @@
  */
 typedef enum BTReply
 {
-    NACK = '0',   /** Not Acknowledged, data dari HP tidak sesuai dengan yang diinginkan **/
-    ACK = '1',    /** Acknowledged, data dari HP sesuai yang diinginkan **/
-    ERR = '2',    /** Terjadi error pada Immobilizer **/
-    ACK_UNL = '3' /** Acknowledge, data dari HP sesuai yang diinginkan, dan Immobilizer dalam keadaan unlocked **/
+    NACK = '0',   /**< Not Acknowledged, data dari HP tidak sesuai dengan yang diinginkan **/
+    ACK = '1',    /**< Acknowledged, data dari HP sesuai yang diinginkan **/
+    ERR = '2',    /**< Terjadi error pada Immobilizer **/
+    ACK_UNL = '3' /**< Acknowledge, data dari HP sesuai yang diinginkan, dan Immobilizer dalam keadaan unlocked **/
 } bt_reply;
 
 /**
@@ -41,13 +41,13 @@ typedef enum BTReply
  */
 typedef enum BTRequest
 {
-    REQUEST_NOTHING = '0',  /** 0: Tidak ada request, hanya untuk kenyamanan dan debugging **/
-    REQUEST_UNLOCK,         /** 1: Request unlock immobilizer. Berfungsi ganda untuk mengunci immobilizer 
+    REQUEST_NOTHING = '0',  /**< 0: Tidak ada request, hanya untuk kenyamanan dan debugging **/
+    REQUEST_UNLOCK,         /**< 1: Request unlock immobilizer. Berfungsi ganda untuk mengunci immobilizer 
                                    jika immobilizer sudah dalam keadaan terbuka/unlock **/
-    REQUEST_CHANGE_PIN,     /** 2: Request ubah pin immobilizer **/
-    REQUEST_REGISTER_PHONE, /** 3: Request daftar HP ke Immobilizer **/
-    REQUEST_REMOVE_PHONE,   /** 4: Request hapus akun dari Immobilizer **/
-    REQUEST_DISABLE         /** 5: Request disable immobilizer. Tidak/belum diimplementasi **/
+    REQUEST_CHANGE_PIN,     /**< 2: Request ubah pin immobilizer **/
+    REQUEST_REGISTER_PHONE, /**< 3: Request daftar HP ke Immobilizer **/
+    REQUEST_REMOVE_PHONE,   /**< 4: Request hapus akun dari Immobilizer **/
+    REQUEST_DISABLE         /**< 5: Request disable immobilizer. Tidak/belum diimplementasi **/
 } bt_request;
 
 /** 
@@ -58,18 +58,18 @@ typedef enum BTRequest
  */
 typedef enum BTEvent
 {
-    EVENT_TRANSITION,    /** Event transisi antara satu state ke state lain **/
-    EVENT_BT_INPUT,      /** Event terdapat input ke Bluetooth Immobilizer **/
-    EVENT_BT_INPUT_END,  /** Event input bluetooth selesai **/
-    EVENT_BT_OUTPUT,     /** Event terdapat output dari Bluetooth Immobilizer **/
-    EVENT_BT_CONNECT,    /** Event terdapat sambungan baru ke Bluetooth Immobilizer **/
-    EVENT_BT_DISCONNECT, /** Event sambungan terputus pada Bluetooth Immobilizer **/
-    EVENT_TIMEOUT,       /** Event batas waktu habis, atau terjadi hang **/
-    EVENT_ERROR,         /** Event terjadi error pada Immobilizer **/
-    EVENT_ALARM_OFF,     /** Event alarm mati **/
-    EVENT_ENGINE,        /** Event keadaan mesin berubah **/
-    EVENT_S_INPUT,       /** Event terdapat input serial dari PC dsb. , untuk debugging **/
-    EVENT_SET_CREDENTIAL /** Event gak tau, tidak diimplementasi **/
+    EVENT_TRANSITION,    /**< Event transisi antara satu state ke state lain **/
+    EVENT_BT_INPUT,      /**< Event terdapat input ke Bluetooth Immobilizer **/
+    EVENT_BT_INPUT_END,  /**< Event input bluetooth selesai **/
+    EVENT_BT_OUTPUT,     /**< Event terdapat output dari Bluetooth Immobilizer **/
+    EVENT_BT_CONNECT,    /**< Event terdapat sambungan baru ke Bluetooth Immobilizer **/
+    EVENT_BT_DISCONNECT, /**< Event sambungan terputus pada Bluetooth Immobilizer **/
+    EVENT_TIMEOUT,       /**< Event batas waktu habis, atau terjadi hang **/
+    EVENT_ERROR,         /**< Event terjadi error pada Immobilizer **/
+    EVENT_ALARM_OFF,     /**< Event alarm mati **/
+    EVENT_ENGINE,        /**< Event keadaan mesin berubah **/
+    EVENT_S_INPUT,       /**< Event terdapat input serial dari PC dsb. , untuk debugging **/
+    EVENT_SET_CREDENTIAL /**< Event gak tau, tidak diimplementasi **/
 } bt_event;
 
 /**
@@ -79,9 +79,9 @@ typedef enum BTEvent
  */
 typedef struct BTBuffer
 {
-    uint8_t data[BT_BUF_LEN_BYTE]; /** Array berukuran BT_BUF_LEN_BYTE, menyimpan data **/
-    size_t len;                    /** Ukuran data **/
-    bt_event event;                /** Tipe event yang terjadi **/
+    uint8_t data[BT_BUF_LEN_BYTE]; /**< Array berukuran BT_BUF_LEN_BYTE, menyimpan data **/
+    size_t len;                    /**< Ukuran data **/
+    bt_event event;                /**< Tipe event yang terjadi **/
 } bt_buffer;
 
 /**
@@ -89,7 +89,7 @@ typedef struct BTBuffer
  * 
  * Diminta dari compiler, untuk correctness
  */
-typedef enum
+typedef enum FSMState
 {
     STATE_ERR = 0,
     STATE_DISCONNECT,
@@ -121,13 +121,13 @@ void init_bt_buffer(bt_buffer *buffer);
  */
 typedef struct FSMInterface
 {
-    /** 
+    /** <
      * @brief Mem-print state FSM, untuk debugging
      * @param fsm_state State FSM terbaru
      */
     void (*announceStateImp)(fsm_state);
 
-    /** 
+    /** <
      * @brief Menghasilkan nonce/array dengan nilai acak
      * @param nonce bt_buffer yang menyimpan nonce yang dihasilkan
      * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
@@ -135,21 +135,21 @@ typedef struct FSMInterface
      */
     int (*generateNonceImp)(bt_buffer *);
 
-    /** 
+    /** < 
      * @brief Mengirim bt_reply ke client
      * @param reply Balasan yang diinginkan
      * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
      */
     int (*sendReplyImp)(bt_reply);
 
-    /** 
+    /** <
      * @brief Mengirim bt_buffer ke client
      * @param outbuf buffer yang menyimpan output ke client
      * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
      */
     int (*writeBTImp)(const bt_buffer *);
 
-    /** 
+    /** <
      * @brief Melakukan dekripsi pada sebuah bt_buffer
      * @param ciphertext bt_buffer berisi data terenkripsi
      * @param msg bt_buffer yang menyimpan hasil dekripsi
@@ -158,7 +158,7 @@ typedef struct FSMInterface
      */
     int (*decryptBTImp)(const bt_buffer *, bt_buffer *);
 
-    /** 
+    /** <
      * @brief Menyimpan user credential ke memori
      * @param pin bt_buffer yang menyimpan data PIN pengguna
      * @param client bt_buffer yang menyimpan data MAC address pengguna
@@ -166,13 +166,13 @@ typedef struct FSMInterface
      */    
     int (*storeCredentialImp)(bt_buffer *, bt_buffer *);
 
-    /** 
+    /** <
      * @brief Menghapus user credential dari memori
      * @return BT_SUCCESS jika berhasil
      */
     int (*deleteStoredCredentialImp)(void);
 
-    /**
+    /** <
      * @brief Mengeset public key berdasarkan kunci RSA
      * @return BT_SUCCESS jika berhasil
      * @param keybuf Array yang menyimpan Public Key
@@ -180,58 +180,58 @@ typedef struct FSMInterface
      */
     int (*loadPKImp)(uint8_t *, size_t);
 
-    /** 
+    /** <
      * @brief Mengeset kunci simetris AES
      * @param cipherkey bt_buffer yang menyimpan kunci AES
      * @return BT_SUCCESS jika berhasil
      */
     int (*setCipherkeyImp)(const bt_buffer *);
 
-    /**
+    /** <
      * @brief Mengirim data terenktripsi RSA melalui bluetooth ke client
      * @param outbuf bt_buffer yang menyimpan data output
      * @return BT_SUCCESS jika berhasil
      */
     int (*writeBTRSAImp)(const bt_buffer *);
 
-    /**
+    /** <
      * @brief Menyalakan atau mematikan alarm
      * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
      * @param duration Waktu alarm menyala dalam detik
      */
     int (*setAlarmImp)(int, int);
 
-    /**
+    /** <
      * @brief Menyalakan atau mematikan timer timeout
      * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
      * @param duration Batas waktu untuk timer, dalam detik
      */
     int (*setTimeoutImp)(int, int);
 
-    /** 
+    /** <
      * @brief Melakukan unpairing pada client
      * @param client bt_buffer yang menyimpan MAC address client
      * @return BT_SUCCESS jika berhasil
      */
     int (*unpairBlacklistImp)(const bt_buffer *);
 
-    /** 
+    /** <
      * @brief Menyalakan atau mematikan Immobilizer
      * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
      */
     void (*setImmobilizerImp)(int);
 
-    /**
+    /** <
      * @brief Meng-handle error
      */
     void (*handleErrorImp)(void);
 
-    /**
+    /** <
      * @brief Memutuskan koneksi ke client
      */
     void (*disconnectImp)(void);
 
-    /**
+    /** <
      * @brief Mengatur discoverability perangkat
      * @param enable BT_ENABLE agar discoverability on, BT_DISABLE off
      * @return BT_SUCCESS jika berhasil

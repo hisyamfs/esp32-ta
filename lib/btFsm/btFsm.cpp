@@ -72,23 +72,122 @@ static void (*btFsm_state_table[])(const bt_buffer *param) =
 static fsm_state current_state;
 
 /* FSM interfaces */
-static void (*_announceState)(fsm_state next_state) = nullptr;                       // print the current state, for debugging
-static int (*_generateNonce)(bt_buffer *nonce) = nullptr;                            // generate a random 16 character string
-static int (*_sendReply)(bt_reply status) = nullptr;                                 // send device reply: ACK, NACK, and ERR, downstream
-static int (*_writeBT)(const bt_buffer *outbuf) = nullptr;                           // send data held in output buffer. returns BT_SUCCESS on succesful transfer
+/** 
+ * @brief Mem-print state FSM, untuk debugging
+ * @param fsm_state State FSM terbaru
+ */
+static void (*_announceState)(fsm_state next_state) = nullptr;
+
+/** 
+ * @brief Menghasilkan nonce/array dengan nilai acak
+ * @param nonce bt_buffer yang menyimpan nonce yang dihasilkan
+ * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
+ * @note Panjang nonce yang dihasilkan selalu 16 byte (BT_BLOCK_SIZE_BYTE)
+ */
+static int (*_generateNonce)(bt_buffer *nonce) = nullptr; // generate a random 16 character string
+
+/** 
+ * @brief Mengirim bt_reply ke client
+ * @param reply Balasan yang diinginkan
+ * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
+ */
+static int (*_sendReply)(bt_reply status) = nullptr; 
+
+/** 
+ * @brief Mengirim bt_buffer ke client
+ * @param outbuf buffer yang menyimpan output ke client
+ * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
+ */
+static int (*_writeBT)(const bt_buffer *outbuf) = nullptr; 
+
+/** 
+ * @brief Melakukan dekripsi pada sebuah bt_buffer
+ * @param ciphertext bt_buffer berisi data terenkripsi
+ * @param msg bt_buffer yang menyimpan hasil dekripsi
+ * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
+ * @note Perhatikan padding
+ */
 static int (*_decryptBT)(const bt_buffer *ciphertext, bt_buffer *message) = nullptr; // decrypt a ciphertext. Returns BT_SUCCESS on succesful decryption
-static int (*_storeCredential)(bt_buffer *pin, bt_buffer *client) = nullptr;         // store the new pin on device memory. returns BT_SUCCESS on success.
-static int (*_deleteStoredCredential)(void) = nullptr;                               // Delete user id and pin from device memory
-static int (*_loadPK)(uint8_t *keybuf, size_t keylen) = nullptr;                     // Load RSA Pubkey for the RSA Cipher
-static int (*_setCipherkey)(const bt_buffer *nonce) = nullptr;                       // Load AES Symkey for the AES-128 Cipher
-static int (*_writeBTRSA)(const bt_buffer *out) = nullptr;                           // send RSA encrypted data
-static int (*_setAlarm)(int enable, int duration) = nullptr;                         // sounds the alarm
-static int (*_setTimeout)(int enable, int duration) = nullptr;                       // create a timer to trigger a connection timeout event
-static int (*_unpairBlacklist)(const bt_buffer *client) = nullptr;                   // detect and prevent unregistered device from ever pairing again
-static void (*_setImmobilizer)(int enable) = nullptr;                                // Turns immobilizer on or off
-static void (*_handleError)(void) = nullptr;                                         // Error handler
-static void (*_disconnect)(void) = nullptr;                                          // Disconnect bluetooth
-static int (*_setDiscoverability)(int) = nullptr;                                    // Set device discoverability
+
+/** 
+ * @brief Menyimpan user credential ke memori
+ * @param pin bt_buffer yang menyimpan data PIN pengguna
+ * @param client bt_buffer yang menyimpan data MAC address pengguna
+ * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
+ */
+static int (*_storeCredential)(bt_buffer *pin, bt_buffer *client) = nullptr
+
+/** 
+ * @brief Menghapus user credential dari memori
+ * @return BT_SUCCESS jika berhasil
+ */
+static int (*_deleteStoredCredential)(void) = nullptr;      
+
+/**
+ * @brief Mengeset public key berdasarkan kunci RSA
+ * @return BT_SUCCESS jika berhasil
+ * @param keybuf Array yang menyimpan Public Key
+ * @param keylen Panjang public key
+ */
+static int (*_loadPK)(uint8_t *keybuf, size_t keylen) = nullptr;  
+
+/** 
+ * @brief Mengeset kunci simetris AES
+ * @param cipherkey bt_buffer yang menyimpan kunci AES
+ * @return BT_SUCCESS jika berhasil
+ */
+static int (*_setCipherkey)(const bt_buffer *nonce) = nullptr;   
+
+/**
+ * @brief Mengirim data terenktripsi RSA melalui bluetooth ke client
+ * @param outbuf bt_buffer yang menyimpan data output
+ * @return BT_SUCCESS jika berhasil
+ */
+static int (*_writeBTRSA)(const bt_buffer *out) = nullptr;   
+
+/**
+ * @brief Menyalakan atau mematikan alarm
+ * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
+ * @param duration Waktu alarm menyala dalam detik
+ */
+static int (*_setAlarm)(int enable, int duration) = nullptr;   
+
+/**
+ * @brief Menyalakan atau mematikan timer timeout
+ * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
+ * @param duration Batas waktu untuk timer, dalam detik
+ */
+static int (*_setTimeout)(int enable, int duration) = nullptr;    
+
+/** 
+ * @brief Melakukan unpairing pada client
+ * @param client bt_buffer yang menyimpan MAC address client
+ * @return BT_SUCCESS jika berhasil
+ */
+static int (*_unpairBlacklist)(const bt_buffer *client) = nullptr;     
+
+/** 
+ * @brief Menyalakan atau mematikan Immobilizer
+ * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
+ */
+static void (*_setImmobilizer)(int enable) = nullptr;   
+
+/**
+ * @brief Meng-handle error
+ */
+static void (*_handleError)(void) = nullptr; 
+
+/**
+ * @brief Memutuskan koneksi ke client
+ */
+static void (*_disconnect)(void) = nullptr; 
+
+/**
+ * @brief Mengatur discoverability perangkat
+ * @param enable BT_ENABLE agar discoverability on, BT_DISABLE off
+ * @return BT_SUCCESS jika berhasil
+ */
+static int (*_setDiscoverability)(int) = nullptr;                            // Set device discoverability
 
 // check user id based on a buffer data. returns BT_SUCCESS if found.
 static int checkUserID(const bt_buffer *id)
@@ -213,7 +312,7 @@ void onTransition()
     run_btFsm(&transition);
 }
 
-int init_btFsm(const fsm_interface* interface)
+int init_btFsm(const fsm_interface *interface)
 {
     init_bt_buffer(&nonce);
     init_bt_buffer(&USER_PIN);
