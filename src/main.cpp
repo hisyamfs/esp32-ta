@@ -54,7 +54,6 @@ void setImmobilizerImp(int enable);
 void exit(void);
 void disconnectImp();
 int setDiscoverabilityImp(int enable);
-
 fsm_interface m_interface = 
 {
 	.announceStateImp = announceStateImp,
@@ -229,7 +228,6 @@ void setup()
 		Serial.println("---------START----------");
 		onTransition();
 	}
-
 	// Test
 	// SerialBT.setDiscoverability(false);
 }

@@ -71,123 +71,24 @@ static void (*btFsm_state_table[])(const bt_buffer *param) =
 /* Holds the current and next state */
 static fsm_state current_state;
 
-/* FSM interfaces */
-/** 
- * @brief Mem-print state FSM, untuk debugging
- * @param fsm_state State FSM terbaru
- */
-static void (*_announceState)(fsm_state next_state) = nullptr;
-
-/** 
- * @brief Menghasilkan nonce/array dengan nilai acak
- * @param nonce bt_buffer yang menyimpan nonce yang dihasilkan
- * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
- * @note Panjang nonce yang dihasilkan selalu 16 byte (BT_BLOCK_SIZE_BYTE)
- */
-static int (*_generateNonce)(bt_buffer *nonce) = nullptr; // generate a random 16 character string
-
-/** 
- * @brief Mengirim bt_reply ke client
- * @param reply Balasan yang diinginkan
- * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
- */
-static int (*_sendReply)(bt_reply status) = nullptr; 
-
-/** 
- * @brief Mengirim bt_buffer ke client
- * @param outbuf buffer yang menyimpan output ke client
- * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
- */
-static int (*_writeBT)(const bt_buffer *outbuf) = nullptr; 
-
-/** 
- * @brief Melakukan dekripsi pada sebuah bt_buffer
- * @param ciphertext bt_buffer berisi data terenkripsi
- * @param msg bt_buffer yang menyimpan hasil dekripsi
- * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
- * @note Perhatikan padding
- */
-static int (*_decryptBT)(const bt_buffer *ciphertext, bt_buffer *message) = nullptr; // decrypt a ciphertext. Returns BT_SUCCESS on succesful decryption
-
-/** 
- * @brief Menyimpan user credential ke memori
- * @param pin bt_buffer yang menyimpan data PIN pengguna
- * @param client bt_buffer yang menyimpan data MAC address pengguna
- * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
- */
-static int (*_storeCredential)(bt_buffer *pin, bt_buffer *client) = nullptr
-
-/** 
- * @brief Menghapus user credential dari memori
- * @return BT_SUCCESS jika berhasil
- */
-static int (*_deleteStoredCredential)(void) = nullptr;      
-
-/**
- * @brief Mengeset public key berdasarkan kunci RSA
- * @return BT_SUCCESS jika berhasil
- * @param keybuf Array yang menyimpan Public Key
- * @param keylen Panjang public key
- */
-static int (*_loadPK)(uint8_t *keybuf, size_t keylen) = nullptr;  
-
-/** 
- * @brief Mengeset kunci simetris AES
- * @param cipherkey bt_buffer yang menyimpan kunci AES
- * @return BT_SUCCESS jika berhasil
- */
-static int (*_setCipherkey)(const bt_buffer *nonce) = nullptr;   
-
-/**
- * @brief Mengirim data terenktripsi RSA melalui bluetooth ke client
- * @param outbuf bt_buffer yang menyimpan data output
- * @return BT_SUCCESS jika berhasil
- */
-static int (*_writeBTRSA)(const bt_buffer *out) = nullptr;   
-
-/**
- * @brief Menyalakan atau mematikan alarm
- * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
- * @param duration Waktu alarm menyala dalam detik
- */
-static int (*_setAlarm)(int enable, int duration) = nullptr;   
-
-/**
- * @brief Menyalakan atau mematikan timer timeout
- * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
- * @param duration Batas waktu untuk timer, dalam detik
- */
-static int (*_setTimeout)(int enable, int duration) = nullptr;    
-
-/** 
- * @brief Melakukan unpairing pada client
- * @param client bt_buffer yang menyimpan MAC address client
- * @return BT_SUCCESS jika berhasil
- */
-static int (*_unpairBlacklist)(const bt_buffer *client) = nullptr;     
-
-/** 
- * @brief Menyalakan atau mematikan Immobilizer
- * @param enable BT_ENABLE untuk menyalakan, BT_DISABLE untuk mematikan
- */
-static void (*_setImmobilizer)(int enable) = nullptr;   
-
-/**
- * @brief Meng-handle error
- */
-static void (*_handleError)(void) = nullptr; 
-
-/**
- * @brief Memutuskan koneksi ke client
- */
-static void (*_disconnect)(void) = nullptr; 
-
-/**
- * @brief Mengatur discoverability perangkat
- * @param enable BT_ENABLE agar discoverability on, BT_DISABLE off
- * @return BT_SUCCESS jika berhasil
- */
-static int (*_setDiscoverability)(int) = nullptr;                            // Set device discoverability
+/* FSM interface functions */
+static announceState _announceState = nullptr;
+static generateNonce _generateNonce = nullptr;
+static sendReply _sendReply = nullptr;
+static writeBT _writeBT = nullptr;
+static decryptBT _decryptBT = nullptr;
+static storeCredential _storeCredential = nullptr;
+static deleteStoredCredential _deleteStoredCredential = nullptr;
+static loadPK _loadPK = nullptr;
+static setCipherkey _setCipherkey = nullptr;
+static writeBTRSA _writeBTRSA = nullptr;
+static setAlarm _setAlarm = nullptr;
+static setTimeout _setTimeout = nullptr;
+static unpairBlacklist _unpairBlacklist = nullptr;
+static setImmobilizer _setImmobilizer = nullptr;
+static handleError _handleError = nullptr;
+static disconnect _disconnect = nullptr;
+static setDiscoverability _setDiscoverability = nullptr;
 
 // check user id based on a buffer data. returns BT_SUCCESS if found.
 static int checkUserID(const bt_buffer *id)
@@ -239,6 +140,19 @@ unsigned int get_registration_status()
 static void run_btFsm(const bt_buffer *param)
 {
     btFsm_state_table[current_state](param);
+}
+
+int onEvent(bt_event event, const uint8_t *data, size_t len)
+{
+    if (len > BT_BUF_LEN_BYTE)
+        return BT_FAIL;
+    // Format benar
+    bt_buffer evt;
+    evt.event = event;
+    evt.len = len;
+    memcpy(&evt.data, data, len);
+    run_btFsm(&evt);
+    return BT_SUCCESS;
 }
 
 void onBTInput(const uint8_t *input_data, size_t input_len)
@@ -310,6 +224,15 @@ void onTransition()
     bt_buffer transition;
     transition.event = EVENT_TRANSITION;
     run_btFsm(&transition);
+}
+
+void onBypassDetection(int is_bypassed)
+{
+    bt_buffer bypass;
+    bypass.event = EVENT_BYPASS_DETECTOR;
+    bypass.len = 1;
+    bypass.data[0] = (uint8_t) is_bypassed;
+    run_btFsm(&bypass);
 }
 
 int init_btFsm(const fsm_interface *interface)
@@ -443,6 +366,12 @@ static void state_disconnect(const bt_buffer *param)
             change_state(STATE_ERR);
         break;
     }
+    case EVENT_BYPASS_DETECTOR:
+    {
+        if (param->data[0] == BT_ENABLE)
+            change_state(STATE_ALARM);
+        break;
+    }
     default:
         break;
     }
@@ -489,6 +418,13 @@ static void state_connect(const bt_buffer *param)
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
         break;
+    case EVENT_BYPASS_DETECTOR:
+        if (param->data[0] == BT_ENABLE)
+        {
+            _sendReply(NACK);
+            change_state(STATE_ALARM);
+        }
+        break;
     default:
         break;
     }
@@ -512,6 +448,13 @@ static void state_challenge(const bt_buffer *param)
         break;
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
+        break;
+    case EVENT_BYPASS_DETECTOR:
+        if (param->data[0] == BT_ENABLE)
+        {
+            _sendReply(NACK);
+            change_state(STATE_ALARM);
+        }
         break;
     default:
         break;
@@ -554,6 +497,13 @@ static void state_verification(const bt_buffer *param)
     case EVENT_TIMEOUT:
         _sendReply(NACK);
         change_state(STATE_CONNECT);
+        break;
+    case EVENT_BYPASS_DETECTOR:
+        if (param->data[0] == BT_ENABLE)
+        {
+            _sendReply(NACK);
+            change_state(STATE_ALARM);
+        }
         break;
     default:
         break;
@@ -616,6 +566,13 @@ static void state_pin(const bt_buffer *param)
         _sendReply(NACK);
         change_state(STATE_CONNECT);
         break;
+    case EVENT_BYPASS_DETECTOR:
+        if (param->data[0] == BT_ENABLE)
+        {
+            _sendReply(NACK);
+            change_state(STATE_ALARM);
+        }
+        break;
     default:
         break;
     }
@@ -651,14 +608,26 @@ static void state_unlock(const bt_buffer *param)
     case EVENT_S_INPUT: // For debugging
     case EVENT_ENGINE:
     {
-        _setImmobilizer(BT_ENABLE);
-        _sendReply(ACK);
-        change_state(STATE_CONNECT);
+        if (param->data[0] != BT_ENABLE)
+        {
+            _setImmobilizer(BT_ENABLE);
+            _sendReply(ACK);
+            change_state(STATE_CONNECT);
+        }
         break;
     }
     case EVENT_BT_DISCONNECT:
     {
         change_state(STATE_UNLOCK_DISCONNECT);
+        break;
+    }
+    case EVENT_BYPASS_DETECTOR:
+    {
+        if (param->data[0] == BT_ENABLE)
+        {
+            _sendReply(NACK);
+            _setAlarm(BT_ENABLE, BT_ALARM_DURATION_SEC);
+        }
         break;
     }
     default:
@@ -688,6 +657,10 @@ static void state_unlock_disconnect(const bt_buffer *param)
     case EVENT_S_INPUT:
     case EVENT_ENGINE:
         change_state(STATE_DISCONNECT);
+        break;
+    case EVENT_BYPASS_DETECTOR:
+        if (param->data[0] == BT_ENABLE)
+            _setAlarm(BT_ENABLE, BT_ALARM_DURATION_SEC);
         break;
     default:
         break;
@@ -731,6 +704,13 @@ static void state_new_pin(const bt_buffer *param)
         _sendReply(NACK);
         change_state(STATE_CONNECT);
         break;
+    case EVENT_BYPASS_DETECTOR:
+        if (param->data[0] == BT_ENABLE)
+        {
+            _sendReply(NACK);
+            change_state(STATE_ALARM);
+        }
+        break;
     default:
         break;
     }
@@ -753,6 +733,10 @@ static void state_delete(const bt_buffer *param)
         else
             _sendReply(NACK);
         change_state(STATE_CONNECT);
+        break;
+    case EVENT_BYPASS_DETECTOR:
+        if (param->data[0] == BT_ENABLE)
+            change_state(STATE_ALARM);
         break;
     default:
         break;
@@ -821,6 +805,10 @@ static void state_key_exchange(const bt_buffer *param)
         break;
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
+        break;
+    case EVENT_BYPASS_DETECTOR:
+        if (param->data[0] == BT_ENABLE)
+            change_state(STATE_ALARM);
         break;
     default:
         break;
