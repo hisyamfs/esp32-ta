@@ -3,16 +3,20 @@
 #include "Arduino.h"
 
 /* FSM variables */
-static bt_buffer nonce, USER_ADDR, USER_PIN, client;
-static volatile bt_request user_request;
-static volatile bt_reply IS_REGISTERED;
-static uint8_t keybuf[1024];
-static size_t keylen;
+static bt_buffer nonce;                  /** 16 random numbers for challenge-response step */
+static bt_buffer USER_ADDR;              /** Bluetooth MAC address of the registered account */
+static bt_buffer USER_PIN;               /** PIN of the registered acoount */
+static bt_buffer client;                 /** Bluetooth MAC address of the incoming client */
+static volatile bt_request user_request; /** Incoming user request from the client */
+static volatile bt_reply IS_REGISTERED;  /**  Is there a registered account on the devie? */
+static uint8_t keybuf[1024];             /** Buffer to holds the Public Key data in key exchange step */
+static size_t keylen;                    /** Length of the incoming public key in the key exchange step */
 
 /* State function, implements each state */
 static void state_err(const bt_buffer *param);
 static void state_disconnect(const bt_buffer *param);
-static void state_connect(const bt_buffer *param);
+static void state_connecting(const bt_buffer *param);
+static void state_connected(const bt_buffer *param);
 static void state_challenge(const bt_buffer *param);
 static void state_verification(const bt_buffer *param);
 static void state_pin(const bt_buffer *param);
@@ -29,7 +33,7 @@ typedef enum
 {
     STATE_ERR = 0,
     STATE_DISCONNECT,
-    STATE_CONNECT,
+    STATE_CONNECTED,
     STATE_CHALLENGE,
     STATE_VERIFICATION,
     STATE_PIN,
@@ -56,7 +60,7 @@ static void (*btFsm_state_table[])(const bt_buffer *param) =
     {
         state_err,
         state_disconnect,
-        state_connect,
+        state_connected,
         state_challenge,
         state_verification,
         state_pin,
@@ -231,7 +235,7 @@ void onBypassDetection(int is_bypassed)
     bt_buffer bypass;
     bypass.event = EVENT_BYPASS_DETECTOR;
     bypass.len = 1;
-    bypass.data[0] = (uint8_t) is_bypassed;
+    bypass.data[0] = (uint8_t)is_bypassed;
     run_btFsm(&bypass);
 }
 
@@ -338,27 +342,12 @@ static void state_err(const bt_buffer *param)
 
 static void state_disconnect(const bt_buffer *param)
 {
+    static int to_unpair = BT_ENABLE;
     switch (param->event)
     {
-    case EVENT_BT_CONNECT:
-    {
-        if ((IS_REGISTERED == ACK) && (checkUserID(param) != BT_SUCCESS))
-        {
-            _sendReply(NACK);
-            // block the client from ever pairing again
-            _unpairBlacklist(param);
-        }
-        else // no registered user yet, or the client is of registered address
-        {
-            client.len = BT_ADDR_LEN;
-            memcpy(&client.data, param->data, client.len);
-            _sendReply(ACK);
-            change_state(STATE_CONNECT);
-        }
-        break;
-    }
     case EVENT_TRANSITION:
     {
+        init_bt_buffer(&client); // reset incoming client address
         int enable = BT_ENABLE;
         if (IS_REGISTERED == ACK)
             enable = BT_DISABLE;
@@ -366,10 +355,48 @@ static void state_disconnect(const bt_buffer *param)
             change_state(STATE_ERR);
         break;
     }
+    case EVENT_BT_CONNECT:
+    {
+        client.len = BT_ADDR_LEN;
+        memcpy(&client.data, param->data, client.len); // save incoming client address
+        if ((IS_REGISTERED == ACK) && (checkUserID(&client) != BT_SUCCESS))
+        {
+            to_unpair = BT_ENABLE;
+            _disconnect();
+        }
+        else // no registered user yet, or the client is of registered address
+            to_unpair = BT_DISABLE;
+        // after this, wait for the client to send. This is done to sync the timing
+        break;
+    }
+    case EVENT_BT_INPUT: // client address is already updated with the latest data
+    {
+        if (to_unpair == BT_DISABLE) // client is registered
+        {
+            _sendReply(ACK);
+            change_state(STATE_CONNECTED);
+        }
+        else // inform the incoming client it's not registered yet, and disconnect
+        {
+            _sendReply(NACK);
+            _disconnect();
+        }
+        break;
+    }
+    case EVENT_BT_DISCONNECT:
+    {
+        if (to_unpair == BT_ENABLE) // unpair
+        {
+            _unpairBlacklist(&client); // unpair
+            to_unpair = BT_DISABLE;    // clear unpair flag
+        }
+        init_bt_buffer(&client); // reset incoming client address
+        break;
+    }
     case EVENT_BYPASS_DETECTOR:
     {
         if (param->data[0] == BT_ENABLE)
-            change_state(STATE_ALARM);
+            _setAlarm(BT_ENABLE, BT_ALARM_DURATION_SEC);
         break;
     }
     default:
@@ -377,7 +404,7 @@ static void state_disconnect(const bt_buffer *param)
     }
 }
 
-static void state_connect(const bt_buffer *param)
+static void state_connected(const bt_buffer *param)
 {
     switch (param->event)
     {
@@ -398,7 +425,7 @@ static void state_connect(const bt_buffer *param)
                 break;
             }
         }
-        else
+        else // NACK
         {
             switch (user_request)
             {
@@ -496,7 +523,7 @@ static void state_verification(const bt_buffer *param)
         break;
     case EVENT_TIMEOUT:
         _sendReply(NACK);
-        change_state(STATE_CONNECT);
+        change_state(STATE_CONNECTED);
         break;
     case EVENT_BYPASS_DETECTOR:
         if (param->data[0] == BT_ENABLE)
@@ -527,7 +554,7 @@ static void state_pin(const bt_buffer *param)
             {
                 _setAlarm(BT_DISABLE, 0);
                 _sendReply(ACK);
-                fsm_state next_state = STATE_CONNECT;
+                fsm_state next_state = STATE_CONNECTED;
                 switch (user_request)
                 {
                 case REQUEST_UNLOCK:
@@ -543,7 +570,7 @@ static void state_pin(const bt_buffer *param)
                     next_state = STATE_DELETE;
                     break;
                 default:
-                    next_state = STATE_CONNECT;
+                    next_state = STATE_CONNECTED;
                 }
                 change_state(next_state);
             }
@@ -564,7 +591,7 @@ static void state_pin(const bt_buffer *param)
         break;
     case EVENT_TIMEOUT:
         _sendReply(NACK);
-        change_state(STATE_CONNECT);
+        change_state(STATE_CONNECTED);
         break;
     case EVENT_BYPASS_DETECTOR:
         if (param->data[0] == BT_ENABLE)
@@ -597,7 +624,7 @@ static void state_unlock(const bt_buffer *param)
         {
             _setImmobilizer(BT_ENABLE);
             _sendReply(ACK);
-            change_state(STATE_CONNECT);
+            change_state(STATE_CONNECTED);
         }
         else
         {
@@ -612,7 +639,7 @@ static void state_unlock(const bt_buffer *param)
         {
             _setImmobilizer(BT_ENABLE);
             _sendReply(ACK);
-            change_state(STATE_CONNECT);
+            change_state(STATE_CONNECTED);
         }
         break;
     }
@@ -637,22 +664,43 @@ static void state_unlock(const bt_buffer *param)
 
 static void state_unlock_disconnect(const bt_buffer *param)
 {
+    static int to_unpair = BT_ENABLE;
     switch (param->event)
     {
+    case EVENT_TRANSITION:
+        init_bt_buffer(&client); // clear incoming client address
+        break;
     case EVENT_BT_CONNECT:
-        if (checkUserID(param) != BT_SUCCESS)
+        client.len = BT_ADDR_LEN;
+        memcpy(&client.data, param->data, client.len); // save incoming client address
+        if ((IS_REGISTERED == ACK) && (checkUserID(&client) != BT_SUCCESS))
         {
-            _sendReply(NACK);
-            // block the client from ever pairing again
-            _unpairBlacklist(param);
+            to_unpair = BT_ENABLE;
+            _disconnect();
         }
-        else // the client is of registered addres
+        else // no registered user yet, or the client is of registered address
+            to_unpair = BT_DISABLE;
+        // after this, wait for the client to send. This is done to sync the timing
+        break;
+    case EVENT_BT_INPUT:             // client address is already updated with the latest data
+        if (to_unpair == BT_DISABLE) // client is registered
         {
-            client.len = BT_ADDR_LEN;
-            memcpy(&client.data, param->data, client.len);
             _sendReply(ACK_UNL);
             change_state(STATE_UNLOCK);
         }
+        else // inform the incoming client it's not registered yet, and disconnect
+        {
+            _sendReply(NACK);
+            _disconnect();
+        }
+        break;
+    case EVENT_BT_DISCONNECT:
+        if (to_unpair == BT_ENABLE) // unpair
+        {
+            _unpairBlacklist(&client); // unpair
+            to_unpair = BT_DISABLE;    // clear unpair flag
+        }
+        init_bt_buffer(&client); // reset incoming client address
         break;
     case EVENT_S_INPUT:
     case EVENT_ENGINE:
@@ -689,7 +737,7 @@ static void state_new_pin(const bt_buffer *param)
             }
             else
                 _sendReply(NACK);
-            change_state(STATE_CONNECT);
+            change_state(STATE_CONNECTED);
         }
         else
         {
@@ -702,7 +750,7 @@ static void state_new_pin(const bt_buffer *param)
         break;
     case EVENT_TIMEOUT:
         _sendReply(NACK);
-        change_state(STATE_CONNECT);
+        change_state(STATE_CONNECTED);
         break;
     case EVENT_BYPASS_DETECTOR:
         if (param->data[0] == BT_ENABLE)
@@ -732,7 +780,7 @@ static void state_delete(const bt_buffer *param)
         }
         else
             _sendReply(NACK);
-        change_state(STATE_CONNECT);
+        change_state(STATE_CONNECTED);
         break;
     case EVENT_BYPASS_DETECTOR:
         if (param->data[0] == BT_ENABLE)
@@ -749,7 +797,7 @@ static void state_alarm(const bt_buffer *param)
     {
     case EVENT_TRANSITION:
         _setAlarm(BT_ENABLE, BT_ALARM_DURATION_SEC);
-        change_state(STATE_CONNECT);
+        change_state(STATE_CONNECTED);
         break;
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
@@ -790,18 +838,18 @@ static void state_key_exchange(const bt_buffer *param)
             else
             {
                 _sendReply(NACK);
-                change_state(STATE_CONNECT);
+                change_state(STATE_CONNECTED);
             }
         }
         else
         {
             _sendReply(NACK);
-            change_state(STATE_CONNECT);
+            change_state(STATE_CONNECTED);
         }
         break;
     case EVENT_TIMEOUT:
         _sendReply(NACK);
-        change_state(STATE_CONNECT);
+        change_state(STATE_CONNECTED);
         break;
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
