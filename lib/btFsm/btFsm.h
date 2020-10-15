@@ -58,19 +58,20 @@ typedef enum BTRequest
  */
 typedef enum BTEvent
 {
-    EVENT_TRANSITION,     /** Event transisi antara satu state ke state lain */
-    EVENT_BT_INPUT,       /** Event terdapat input ke Bluetooth Immobilizer */
-    EVENT_BT_INPUT_END,   /** Event input bluetooth selesai */
-    EVENT_BT_OUTPUT,      /** Event terdapat output dari Bluetooth Immobilizer */
-    EVENT_BT_CONNECT,     /** Event terdapat sambungan baru ke Bluetooth Immobilizer */
-    EVENT_BT_DISCONNECT,  /** Event sambungan terputus pada Bluetooth Immobilizer */
-    EVENT_TIMEOUT,        /** Event batas waktu habis, atau terjadi hang */
-    EVENT_ERROR,          /** Event terjadi error pada Immobilizer */
-    EVENT_ALARM_OFF,      /** Event alarm mati */
-    EVENT_ENGINE,         /** Event keadaan mesin berubah */
-    EVENT_S_INPUT,        /** Event terdapat input serial dari PC dsb. , untuk debugging */
-    EVENT_SET_CREDENTIAL, /** Event gak tau, tidak diimplementasi */
-    EVENT_BYPASS_DETECTOR /** Event bypass detector mendeteksi ada upaya bypass, dan upaya bypass berakhir */
+    EVENT_TRANSITION,      /** Event transisi antara satu state ke state lain */
+    EVENT_BT_INPUT,        /** Event terdapat input ke Bluetooth Immobilizer */
+    EVENT_BT_INPUT_END,    /** Event input bluetooth selesai */
+    EVENT_BT_OUTPUT,       /** Event terdapat output dari Bluetooth Immobilizer */
+    EVENT_BT_CONNECT,      /** Event terdapat sambungan baru ke Bluetooth Immobilizer */
+    EVENT_BT_DISCONNECT,   /** Event sambungan terputus pada Bluetooth Immobilizer */
+    EVENT_TIMEOUT,         /** Event batas waktu habis, atau terjadi hang */
+    EVENT_ERROR,           /** Event terjadi error pada Immobilizer */
+    EVENT_ALARM_OFF,       /** Event alarm mati */
+    EVENT_ENGINE,          /** Event keadaan mesin berubah */
+    EVENT_S_INPUT,         /** Event terdapat input serial dari PC dsb. , untuk debugging */
+    EVENT_SET_CREDENTIAL,  /** Event gak tau, tidak diimplementasi */
+    EVENT_BYPASS_DETECTOR, /** Event bypass detector mendeteksi ada upaya bypass, dan upaya bypass berakhir */
+    EVENT_NOTHING          /** Event nggak ngapa2in, jangan dipake */
 } bt_event;
 
 /**
@@ -235,6 +236,12 @@ typedef void (*disconnect)(void);
  */
 typedef int (*setDiscoverability)(int);
 
+/**
+ * @brief Meng-handle perubahan state
+ * @return BT_SUCCESS jika berhasil, BT_FAIL jika gagal
+ */
+typedef int (*customTransition)(void);
+
 /** 
  * @struct FSMInterface
  * @brief Interface antara FSM dengan modul lain pada ESP32
@@ -259,6 +266,7 @@ typedef int (*setDiscoverability)(int);
  * @param handleErrorImp Error handling 
  * @param disconnectImp Memutus sambungan ke client 
  * @param setDiscoverabilityImp Mengatur discoverability perangkat 
+ * @param customTransitionImp Melakukan transisi antar state
  */
 typedef struct FSMInterface
 {
@@ -279,6 +287,7 @@ typedef struct FSMInterface
     handleError handleErrorImp;                       /** Error handling */
     disconnect disconnectImp;                         /** Memutus sambungan ke client */
     setDiscoverability setDiscoverabilityImp;         /** Mengatur discoverability perangkat */
+    customTransition customTransitionImp;             /** Melakukan transisi antar state */
 } fsm_interface;
 
 /** ------------------------------------------------------- **/
@@ -327,6 +336,13 @@ bt_request parse_request(const bt_buffer *buffer);
  * @return #BT_SUCCESS jika sesuai format, #BT_FAIL jika tidak
  */
 int onEvent(bt_event event, const uint8_t *data, size_t len);
+
+/** 
+ * @brief Memanggil FSM dengan input bt_buffer
+ * @param input bt_buffer Terdefinisi
+ * @return #BT_SUCCESS jika sesuai format, #BT_FAIL jika tidak
+ */
+int onInput(const bt_buffer *input);
 
 /** 
  * @brief Memanggil FSM dengan event input bluetooth
@@ -442,5 +458,16 @@ fsm_state get_current_state();
  * @return Status registrasi terakhir
  */
 unsigned int get_registration_status();
+
+/**
+ * @brief Menghasilkan bt_buffer dengan event dan data yang diinginkan
+ * @param buf bt_buffer yang diinginkan
+ * @param event Event yang diinginkan
+ * @param data Data yang diinginkan
+ * @param len Ukuran data yang diinginkan
+ * @return #BT_SUCCESS jika berhasil, #BT_FAIL jika gagal
+ * @note Tidak dapat menggunakan #EVENT_TRANSITION sebagai nilai parameter event
+ */
+int raise_event(bt_buffer *buf, bt_event event, const uint8_t *data, size_t len);
 
 #endif // !BT_FSM_H

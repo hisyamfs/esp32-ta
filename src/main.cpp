@@ -1,3 +1,9 @@
+/**
+ * @file coba.cpp
+ * @author Siapa ya
+ * @brief Versi coba coba: fsm dengan event queue
+ */
+
 #include <Arduino.h>
 #include "btFsm.h"
 #include "myBluetoothSerial.h"
@@ -17,6 +23,10 @@
 #error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
 #endif
 
+#define CURRENT_COIL 32
+#define CURRENT_CONTACT_KEY 34
+#define RELAY 26
+#define BUZZER 14
 #define LED 2
 #define ENGINE 4
 #define PRINT_RESULT 1
@@ -54,8 +64,9 @@ void setImmobilizerImp(int enable);
 void exit(void);
 void disconnectImp();
 int setDiscoverabilityImp(int enable);
-fsm_interface m_interface = 
-{
+int customTransitionImp();
+
+fsm_interface m_interface = {
 	.announceStateImp = announceStateImp,
 	.generateNonceImp = generateNonceImp,
 	.sendReplyImp = sendReplyImp,
@@ -72,11 +83,14 @@ fsm_interface m_interface =
 	.setImmobilizerImp = setImmobilizerImp,
 	.handleErrorImp = exit,
 	.disconnectImp = disconnectImp,
-	.setDiscoverabilityImp = setDiscoverabilityImp
-};
+	.setDiscoverabilityImp = setDiscoverabilityImp,
+	.customTransitionImp = customTransitionImp};
 
 void setupKeyInput();
 void readKeyInput();
+void readCurrent();
+void displayMeasurement();
+void checkBypass();
 void setupImmobilizer();
 void enableImmobilizer();
 void disableImmobilizer();
@@ -86,27 +100,160 @@ void printError(int errcode);
 void onBTInputInterface(const uint8_t *buffer, size_t blen);
 void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 
-// Baca posisi kunci motor pengguna
+int Voltage1;
+int Voltage2;
+int Current1;
+int Current2;
+
+TaskHandle_t Task1;
+TaskHandle_t Task2;
+xQueueHandle qFsmEvent;
+
+// Task 1 = baca sensor arus (continous, high priority)
+void Task1code(void *pvParameters)
+{
+	for (;;)
+	{
+		readCurrent();
+		displayMeasurement();
+		checkBypass();
+	}
+}
+
+//Task 2 = baca input serial
+void Task2code(void *pvParameters)
+{
+	static bt_buffer serial;
+	for (;;)
+	{
+		size_t slen = Serial.available();
+		if (slen > 0 && slen <= 32)
+		{
+			char sbuf[32];
+			Serial.readBytes(sbuf, slen);
+			// onSInput((const uint8_t *)sbuf, slen);
+			if (raise_event(&serial, EVENT_S_INPUT, (const uint8_t*) sbuf, slen) == BT_SUCCESS)
+				xQueueSend(qFsmEvent, &serial, 0);
+		}
+		// readKeyInput();
+		delay(20);
+	}
+}
+
+void vTaskFSM(void *pvParameters)
+{
+	bt_buffer input;
+	int ret;
+	while (1)
+	{
+		if (qFsmEvent != NULL && xQueueReceive(qFsmEvent, &input, 0) == pdPASS)
+		{
+			ret = onInput(&input);
+			vTaskDelay(pdMS_TO_TICKS(20));
+		}
+	}
+}
+
+int customTransitionImp(void)
+{
+	bt_buffer trans;
+	trans.event = EVENT_TRANSITION;
+	trans.len = 0;
+	xQueueSend(qFsmEvent, &trans, 0);
+	return BT_SUCCESS;
+}
+
+void readCurrent(void)
+{
+	for (int i = 0; i < 1000; i++)
+	{
+		//Read current as voltage on GPIO
+		Voltage1 = (Voltage1 + ((3.3 / 4095) * abs(analogRead(CURRENT_COIL))));		   // (5 V / 1024 (Analog) = 0.0049) which converter Measured analog input voltage to 5 V Range
+		Voltage2 = (Voltage2 + ((3.3 / 4095) * abs(analogRead(CURRENT_CONTACT_KEY)))); // (5 V / 1024 (Analog) = 0.0049) which converter Measured analog input voltage to 5 V Range
+		delay(1);
+	}
+
+	// Removing bias from sensor measurement
+	Voltage1 = (Voltage1 / 1000) - 2.055;
+	Voltage2 = (Voltage2 / 1000) - 2.058;
+
+	// Sensed voltage is converter to current (using sensitivity)
+	Current1 = (Voltage1) / 0.1;
+	Current2 = (Voltage2) / 0.1;
+}
+
+void displayMeasurement(void)
+{
+	Serial.print(Voltage1, 3);
+	Serial.print("V  ");
+	Serial.print(Current1, 3); // the �2� after voltage allows you to display 2 digits after decimal point
+	Serial.print("A      ");
+	Serial.print(Voltage2, 3);
+	Serial.print("V  ");
+	Serial.print(Current2, 3); // the �2� after voltage allows you to display 2 digits after decimal point
+	Serial.print("A   ");
+}
+
+void checkBypass(void)
+{
+	bt_buffer engine;
+	//Current1 = Current from ECU
+	//Current2 = Current from Contact Key
+	if (3 * Current1 < Current2)
+	{
+		digitalWrite(BUZZER, HIGH);
+		Serial.println("AWAS, TERJADI BYPASS");
+		// SerialBT.disconnect();
+
+		/** Uncomment kalo mau coba pake event di bawah, tapi belum pernah dicoba */
+		// const uint8_t is_bypassed = BT_ENABLE;
+		// if (raise_event(&engine, EVENT_BYPASS_DETECTOR, &is_bypassed, 1) == BT_SUCCESS)
+		// 	xQueueSend(qFsmEvent, &engine, 0);
+	}
+	else
+	{
+		if (Current1 < 0, 05)
+		{
+			digitalWrite(BUZZER, LOW);
+			Serial.println("Mesin Mati");
+			// onEngineEvent(BT_DISABLE);
+
+			uint8_t off_key = BT_DISABLE;
+			if (raise_event(&engine, EVENT_ENGINE, &off_key, 1) == BT_SUCCESS)
+				xQueueSend(qFsmEvent, &engine, 0);
+		}
+		else
+		{
+			digitalWrite(BUZZER, LOW);
+			// Serial.println("Aman");
+		}
+	}
+	delay(10);
+}
+
+// Baca posisi kunci motor pengguna -Ini udh ga perlu lagi keknya (Abel)
 void setupKeyInput()
 {
 	pinMode(ENGINE, INPUT_PULLUP);
 }
 
+//Ini juga dah gaperlu lagi keknya soalnya udh masuk di void readCurrent (Abel)
 void readKeyInput()
 {
-	// TODO("Ganti dengan interrupt")
-	static int prev_val = HIGH;
-	int current_val;
-	current_val = digitalRead(ENGINE);
-	if (current_val != prev_val)
-	{
-		onEngineEvent(current_val);
-		prev_val = current_val;
-	}
+	// // TODO("Ganti dengan interrupt")
+	// static int prev_val = HIGH;
+	// int current_val;
+	// current_val = digitalRead(ENGINE);
+	// if (current_val != prev_val)
+	// {
+	// 	// onEngineEvent(current_val);
+	// 	prev_val = current_val;
+	// }
 }
 
 void setup()
 {
+	qFsmEvent = xQueueCreate(20, sizeof(bt_buffer)); // 20 events-long fsm input queue
 	int ret = 0;
 	Serial.begin(115200);
 
@@ -223,31 +370,37 @@ void setup()
 			String id = "ImmobilizerITB-";
 			for (int i = 0; i < 6; i++)
 				id.concat(String(mac[i], HEX));
-			SerialBT.begin(id, false, false);
+			SerialBT.begin(id, false, true);
 		}
 		Serial.println("---------START----------");
 		onTransition();
 	}
+
+	// TODO: Handle event congestion
+	xTaskCreatePinnedToCore(Task1code, "Task1", 20000, NULL, 1, NULL, 1);
+	xTaskCreatePinnedToCore(Task2code, "Task2", 20000, NULL, 1, NULL, 0);
+	xTaskCreatePinnedToCore(vTaskFSM, "FSM", 20000, NULL, 1, NULL, 1);
 	// Test
 	// SerialBT.setDiscoverability(false);
 }
 
 void loop()
 {
-	size_t slen = Serial.available();
-	if (slen > 0 && slen <= 32)
-	{
-		char sbuf[32];
-		Serial.readBytes(sbuf, slen);
-		onSInput((const uint8_t *)sbuf, slen);
-	}
+	// size_t slen = Serial.available();
+	// if (slen > 0 && slen <= 32)
+	// {
+	// 	char sbuf[32];
+	// 	Serial.readBytes(sbuf, slen);
+	// 	onSInput((const uint8_t *)sbuf, slen);
+	// }
 	// readKeyInput();
-	delay(20);
+	// delay(20);
 }
 
 void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 {
 	static uint8_t cl_addr[6];
+	static bt_buffer connect_buf;
 	size_t ADDR_LEN = 6;
 	switch (event)
 	{
@@ -259,13 +412,17 @@ void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 		memcpy(cl_addr, param->srv_open.rem_bda, ADDR_LEN);
 		const char header[] = "Client address:";
 		printBytes((const uint8_t *)cl_addr, ADDR_LEN, header, strlen(header));
-		onBTConnect((const uint8_t *)cl_addr, ADDR_LEN);
+		// onBTConnect((const uint8_t *)cl_addr, ADDR_LEN);
+		if (raise_event(&connect_buf, EVENT_BT_CONNECT, (const uint8_t *)cl_addr, ADDR_LEN) == BT_SUCCESS)
+			xQueueSend(qFsmEvent, &connect_buf, 0);
 		break;
 	}
 	case ESP_SPP_CLOSE_EVT:
 	{
 		Serial.println("Disconnected!");
-		onBTDisconnect((const uint8_t *)cl_addr, ADDR_LEN);
+		// onBTDisconnect((const uint8_t *)cl_addr, ADDR_LEN);
+		if (raise_event(&connect_buf, EVENT_BT_DISCONNECT, (const uint8_t *)cl_addr, ADDR_LEN) == BT_SUCCESS)
+			xQueueSend(qFsmEvent, &connect_buf, 0);
 		break;
 	}
 	default:
@@ -473,6 +630,13 @@ int setAlarmImp(int enable, int duration)
 	return BT_SUCCESS;
 }
 
+void sendTimeoutToEventQueue()
+{
+	bt_buffer timeout;
+	if (raise_event(&timeout, EVENT_TIMEOUT, NULL, 0) == BT_SUCCESS)
+		xQueueSend(qFsmEvent, &timeout, 0);
+}
+
 int setTimeoutImp(int enable, int duration)
 {
 	static int is_active = BT_DISABLE; // Ticker aktif?
@@ -488,7 +652,7 @@ int setTimeoutImp(int enable, int duration)
 #if DEBUG_MODE == 1
 		Serial.printf("Timeout ticker on\n");
 #endif // DEBUG
-		timeout_ticker.attach(duration, onTimeout);
+		timeout_ticker.attach(duration, sendTimeoutToEventQueue);
 	}
 	is_active = enable;
 	return BT_SUCCESS;
@@ -575,11 +739,12 @@ void enableImmobilizer()
 
 void setupImmobilizer()
 {
-	pinMode(LED, OUTPUT);
+	pinMode(RELAY, OUTPUT);
 }
 
 void onBTInputInterface(const uint8_t *buffer, size_t blen)
 {
+	bt_buffer bt_in;
 	if (DEBUG_MODE)
 		Serial.printf("HP: %u :\n", blen);
 	if (blen <= BT_BUF_LEN_BYTE)
@@ -590,7 +755,9 @@ void onBTInputInterface(const uint8_t *buffer, size_t blen)
 			Serial.println();
 			printBytes(buffer, blen, NULL, 0);
 		}
-		onBTInput(buffer, blen);
+		// onBTInput(buffer, blen);
+		if (raise_event(&bt_in, EVENT_BT_INPUT, buffer, blen) == BT_SUCCESS)
+			xQueueSend(qFsmEvent, &bt_in, 0);
 	}
 	else
 	{
@@ -602,10 +769,13 @@ void onBTInputInterface(const uint8_t *buffer, size_t blen)
 				Serial.write(buffer + i, k);
 				// printBytes(buffer, blen, NULL, 0);
 			}
-			onBTInput(buffer + i, k);
+			// onBTInput(buffer + i, k);
+			if (raise_event(&bt_in, EVENT_BT_INPUT, buffer + i, k) == BT_SUCCESS)
+				xQueueSend(qFsmEvent, &bt_in, 0);
 			delay(20);
 		}
-		onBTInputEnd();
+		if (raise_event(&bt_in, EVENT_BT_INPUT_END, NULL, 0) == BT_SUCCESS)
+			xQueueSend(qFsmEvent, &bt_in, 0);
 	}
 }
 

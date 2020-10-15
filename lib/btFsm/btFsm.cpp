@@ -15,7 +15,6 @@ static size_t keylen;                    /** Length of the incoming public key i
 /* State function, implements each state */
 static void state_err(const bt_buffer *param);
 static void state_disconnect(const bt_buffer *param);
-static void state_connecting(const bt_buffer *param);
 static void state_connected(const bt_buffer *param);
 static void state_challenge(const bt_buffer *param);
 static void state_verification(const bt_buffer *param);
@@ -93,6 +92,7 @@ static setImmobilizer _setImmobilizer = nullptr;
 static handleError _handleError = nullptr;
 static disconnect _disconnect = nullptr;
 static setDiscoverability _setDiscoverability = nullptr;
+static customTransition _customTransition = nullptr;
 
 // check user id based on a buffer data. returns BT_SUCCESS if found.
 static int checkUserID(const bt_buffer *id)
@@ -144,6 +144,17 @@ unsigned int get_registration_status()
 static void run_btFsm(const bt_buffer *param)
 {
     btFsm_state_table[current_state](param);
+}
+
+int onInput(const bt_buffer *input)
+{
+    if (input->len > BT_BUF_LEN_BYTE)
+        return BT_FAIL;
+    else
+    {
+        run_btFsm(input);
+        return BT_SUCCESS;
+    }
 }
 
 int onEvent(bt_event event, const uint8_t *data, size_t len)
@@ -225,9 +236,14 @@ void onBTDisconnect(const uint8_t *addr, size_t addr_len)
 
 void onTransition()
 {
-    bt_buffer transition;
-    transition.event = EVENT_TRANSITION;
-    run_btFsm(&transition);
+    if (_customTransition)
+        _customTransition();
+    else
+    {
+        bt_buffer transition;
+        transition.event = EVENT_TRANSITION;
+        run_btFsm(&transition);
+    }
 }
 
 void onBypassDetection(int is_bypassed)
@@ -315,6 +331,8 @@ int init_btFsm(const fsm_interface *interface)
     _setDiscoverability = interface->setDiscoverabilityImp;
     if (_setDiscoverability == nullptr)
         return BT_FAIL;
+
+    _customTransition = interface->customTransitionImp;
 
     keylen = 0;
     for (int i = 0; i < 1024; i++)
@@ -941,4 +959,21 @@ bt_request parse_request(const bt_buffer *buffer)
         return (bt_request)buffer->data[1];
     else
         return REQUEST_NOTHING;
+}
+
+int raise_event(bt_buffer *buf, bt_event event, const uint8_t *data, size_t len)
+{
+    if (len > BT_BUF_LEN_BYTE || event == EVENT_TRANSITION)
+    {
+        buf->event = EVENT_NOTHING;
+        return BT_FAIL;
+    }
+    else
+    {
+        buf->event = event;
+        buf->len = len;
+        if (buf->len > 0)
+            memcpy(&buf->data, data, buf->len);
+        return BT_SUCCESS;
+    }
 }
