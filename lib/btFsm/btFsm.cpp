@@ -793,12 +793,18 @@ static void state_delete(const bt_buffer *param)
             init_bt_buffer(&USER_PIN);
             init_bt_buffer(&USER_ADDR);
             IS_REGISTERED = NACK;
-            _setDiscoverability(BT_ENABLE);
+            // _setDiscoverability(BT_ENABLE);
             _sendReply(ACK);
+            _disconnect();
         }
         else
+        {
             _sendReply(NACK);
-        change_state(STATE_CONNECTED);
+            change_state(STATE_CONNECTED);
+        }
+        break;
+    case EVENT_BT_DISCONNECT:
+        change_state(STATE_DISCONNECT);
         break;
     case EVENT_BYPASS_DETECTOR:
         if (param->data[0] == BT_ENABLE)

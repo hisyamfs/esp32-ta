@@ -132,7 +132,7 @@ void Task2code(void *pvParameters)
 			char sbuf[32];
 			Serial.readBytes(sbuf, slen);
 			// onSInput((const uint8_t *)sbuf, slen);
-			if (raise_event(&serial, EVENT_S_INPUT, (const uint8_t*) sbuf, slen) == BT_SUCCESS)
+			if (raise_event(&serial, EVENT_S_INPUT, (const uint8_t *)sbuf, slen) == BT_SUCCESS)
 				xQueueSend(qFsmEvent, &serial, 0);
 		}
 		// readKeyInput();
@@ -361,17 +361,17 @@ void setup()
 	}
 	else
 	{
-		uint8_t mac[6];
-		if (esp_efuse_mac_get_default(mac) != ESP_OK)
-			SerialBT.begin("ImmobilizerITB-01");
-		else
-		{
-			// Use MAC address as unique Immobilizer ID to advertise the connection
-			String id = "ImmobilizerITB-";
-			for (int i = 0; i < 6; i++)
-				id.concat(String(mac[i], HEX));
-			SerialBT.begin(id, false, true);
-		}
+		// uint8_t mac[6];
+		// if (esp_efuse_mac_get_default(mac) != ESP_OK)
+		// 	SerialBT.begin("ImmobilizerITB-01");
+		// else
+		// {
+		// 	// Use MAC address as unique Immobilizer ID to advertise the connection
+		// 	String id = "ImmobilizerITB-";
+		// 	for (int i = 0; i < 6; i++)
+		// 		id.concat(String(mac[i], HEX));
+		// 	SerialBT.begin(id, false, false);
+		// }
 		Serial.println("---------START----------");
 		onTransition();
 	}
@@ -892,8 +892,19 @@ int writeBTRSAImp(const bt_buffer *out)
 
 int setDiscoverabilityImp(int enable)
 {
-	if (SerialBT.setDiscoverability(enable == BT_ENABLE))
-		return BT_SUCCESS;
+	uint8_t mac[6];
+	String id = "ImmobilizerITB-";
+	bool to_enable = (enable == BT_ENABLE);
+	// Use MAC address as unique Immobilizer ID to advertise the connection
+	if (esp_efuse_mac_get_default(mac) != ESP_OK)
+		// SerialBT.begin("ImmobilizerITB-01");
+		id.concat("01");
 	else
-		return BT_FAIL;
+	{
+		// Use MAC address as unique Immobilizer ID to advertise the connection
+		for (int i = 0; i < 6; i++)
+			id.concat(String(mac[i], HEX));
+	}
+	bool ret = SerialBT.begin(id, false, to_enable);
+	return ret ? BT_SUCCESS : BT_FAIL;
 }
