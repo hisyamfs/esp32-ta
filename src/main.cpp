@@ -115,8 +115,9 @@ void Task1code(void *pvParameters)
 	for (;;)
 	{
 		readCurrent();
-		displayMeasurement();
-		checkBypass();
+		// displayMeasurement();
+		// checkBypass();
+		vTaskDelay(pdMS_TO_TICKS(20));
 	}
 }
 
@@ -361,24 +362,26 @@ void setup()
 	}
 	else
 	{
-		// uint8_t mac[6];
-		// if (esp_efuse_mac_get_default(mac) != ESP_OK)
-		// 	SerialBT.begin("ImmobilizerITB-01");
-		// else
-		// {
-		// 	// Use MAC address as unique Immobilizer ID to advertise the connection
-		// 	String id = "ImmobilizerITB-";
-		// 	for (int i = 0; i < 6; i++)
-		// 		id.concat(String(mac[i], HEX));
-		// 	SerialBT.begin(id, false, false);
-		// }
+		uint8_t mac[6];
+		String id = "ImmobilizerITB-";
+		// Use MAC address as unique Immobilizer ID to advertise the connection
+		if (esp_efuse_mac_get_default(mac) != ESP_OK)
+			// SerialBT.begin("ImmobilizerITB-01");
+			id.concat("01");
+		else
+		{
+			// Use MAC address as unique Immobilizer ID to advertise the connection
+			for (int i = 0; i < 6; i++)
+				id.concat(String(mac[i], HEX));
+		}
+		bool ret = SerialBT.begin(id, false, true);
 		Serial.println("---------START----------");
 		onTransition();
 	}
 
 	// TODO: Handle event congestion
-	xTaskCreatePinnedToCore(Task1code, "Task1", 20000, NULL, 1, NULL, 1);
-	xTaskCreatePinnedToCore(Task2code, "Task2", 20000, NULL, 1, NULL, 0);
+	xTaskCreatePinnedToCore(Task1code, "Task1", 20000, NULL, 2, NULL, 1);
+	xTaskCreatePinnedToCore(Task2code, "Task2", 20000, NULL, 3, NULL, 0);
 	xTaskCreatePinnedToCore(vTaskFSM, "FSM", 20000, NULL, 1, NULL, 1);
 	// Test
 	// SerialBT.setDiscoverability(false);
@@ -484,15 +487,24 @@ int sendReplyImp(bt_reply status)
 
 int writeBTImp(const bt_buffer *outbuf)
 {
-	SerialBT.write(outbuf->data, outbuf->len);
-	if (DEBUG_MODE)
+	size_t ret = SerialBT.write(outbuf->data, outbuf->len);
+	if (ret == outbuf->len)
 	{
+#if DEBUG_MODE
 		Serial.println("ESP32: ");
 		Serial.write(outbuf->data, outbuf->len);
 		Serial.println();
+#endif
 		printBytes(outbuf->data, outbuf->len, NULL, 0);
+		return BT_SUCCESS;
 	}
-	return BT_SUCCESS;
+	else
+	{
+#if DEBUG_MODE
+		Serial.println("ERROR: Write failed");
+#endif
+		return BT_FAIL;
+	}
 }
 
 int decryptBTImp(const bt_buffer *ciphertext, bt_buffer *msg)
@@ -892,19 +904,6 @@ int writeBTRSAImp(const bt_buffer *out)
 
 int setDiscoverabilityImp(int enable)
 {
-	uint8_t mac[6];
-	String id = "ImmobilizerITB-";
-	bool to_enable = (enable == BT_ENABLE);
-	// Use MAC address as unique Immobilizer ID to advertise the connection
-	if (esp_efuse_mac_get_default(mac) != ESP_OK)
-		// SerialBT.begin("ImmobilizerITB-01");
-		id.concat("01");
-	else
-	{
-		// Use MAC address as unique Immobilizer ID to advertise the connection
-		for (int i = 0; i < 6; i++)
-			id.concat(String(mac[i], HEX));
-	}
-	bool ret = SerialBT.begin(id, false, to_enable);
+	bool ret = SerialBT.setDiscoverability(enable == BT_ENABLE);
 	return ret ? BT_SUCCESS : BT_FAIL;
 }

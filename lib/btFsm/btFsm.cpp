@@ -389,10 +389,14 @@ static void state_disconnect(const bt_buffer *param)
     }
     case EVENT_BT_INPUT: // client address is already updated with the latest data
     {
+        delay(20);
         if (to_unpair == BT_DISABLE) // client is registered
         {
-            _sendReply(ACK);
-            change_state(STATE_CONNECTED);
+            int ret = _sendReply(ACK);
+            if (ret == BT_SUCCESS)
+                change_state(STATE_CONNECTED);
+            else 
+                _disconnect();
         }
         else // inform the incoming client it's not registered yet, and disconnect
         {
@@ -791,17 +795,15 @@ static void state_delete(const bt_buffer *param)
         if (_deleteStoredCredential() == BT_SUCCESS)
         {
             init_bt_buffer(&USER_PIN);
-            init_bt_buffer(&USER_ADDR);
+            // init_bt_buffer(&USER_ADDR);
             IS_REGISTERED = NACK;
-            // _setDiscoverability(BT_ENABLE);
+            _setDiscoverability(BT_ENABLE);
             _sendReply(ACK);
-            _disconnect();
+            // _disconnect();
         }
         else
-        {
             _sendReply(NACK);
-            change_state(STATE_CONNECTED);
-        }
+        change_state(STATE_CONNECTED);
         break;
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
