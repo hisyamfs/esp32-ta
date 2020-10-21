@@ -795,15 +795,22 @@ static void state_delete(const bt_buffer *param)
         if (_deleteStoredCredential() == BT_SUCCESS)
         {
             init_bt_buffer(&USER_PIN);
-            // init_bt_buffer(&USER_ADDR);
+            init_bt_buffer(&USER_ADDR);
             IS_REGISTERED = NACK;
             _setDiscoverability(BT_ENABLE);
             _sendReply(ACK);
+            _setTimeout(BT_ENABLE, 60);
             // _disconnect();
         }
         else
+        {
             _sendReply(NACK);
-        change_state(STATE_CONNECTED);
+            change_state(STATE_CONNECTED);
+        }
+        break;
+    case EVENT_BT_INPUT:
+    case EVENT_TIMEOUT:
+        _disconnect();
         break;
     case EVENT_BT_DISCONNECT:
         change_state(STATE_DISCONNECT);
