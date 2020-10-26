@@ -115,8 +115,8 @@ void Task1code(void *pvParameters)
 	for (;;)
 	{
 		readCurrent();
-		// displayMeasurement();
-		// checkBypass();
+		displayMeasurement();
+		checkBypass();
 		vTaskDelay(pdMS_TO_TICKS(20));
 	}
 }
@@ -213,7 +213,7 @@ void checkBypass(void)
 	}
 	else
 	{
-		if (Current1 < 0, 05)
+		if (Current1 < 0.05)
 		{
 			digitalWrite(BUZZER, LOW);
 			Serial.println("Mesin Mati");
