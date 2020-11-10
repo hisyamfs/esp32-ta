@@ -18,6 +18,7 @@
 #define BT_NUM_STATES 13
 #define BT_ALARM_DURATION_SEC 5
 #define BT_REPLY_TIMEOUT_SEC 60
+#define BT_MAX_RETRY 3
 
 /** 
  * @brief Pesan balasan dari Immobilizer, menandakan status Immobilizer ke HP
@@ -27,10 +28,11 @@
  */
 typedef enum BTReply
 {
-    NACK = '0',   /** Not Acknowledged, data dari HP tidak sesuai dengan yang diinginkan */
-    ACK = '1',    /** Acknowledged, data dari HP sesuai yang diinginkan */
-    ERR = '2',    /** Terjadi error pada Immobilizer */
-    ACK_UNL = '3' /** Acknowledge, data dari HP sesuai yang diinginkan, dan Immobilizer dalam keadaan unlocked */
+    NACK = '0',    /** Not Acknowledged, data dari HP tidak sesuai dengan yang diinginkan */
+    ACK = '1',     /** Acknowledged, data dari HP sesuai yang diinginkan */
+    ERR = '2',     /** Terjadi error pada Immobilizer */
+    ACK_UNL = '3', /** Acknowledge, data dari HP sesuai yang diinginkan, dan Immobilizer dalam keadaan unlocked */
+    RETRY = '4'    /** Retry, user diperbolehkan mencoba memasukkan PIN lagi */
 } bt_reply;
 
 /**

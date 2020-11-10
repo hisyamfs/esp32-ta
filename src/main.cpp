@@ -115,8 +115,8 @@ void Task1code(void *pvParameters)
 	for (;;)
 	{
 		readCurrent();
-		displayMeasurement();
-		checkBypass();
+		// displayMeasurement();
+		// checkBypass();
 		vTaskDelay(pdMS_TO_TICKS(20));
 	}
 }

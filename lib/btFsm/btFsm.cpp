@@ -395,7 +395,7 @@ static void state_disconnect(const bt_buffer *param)
             int ret = _sendReply(ACK);
             if (ret == BT_SUCCESS)
                 change_state(STATE_CONNECTED);
-            else 
+            else
                 _disconnect();
         }
         else // inform the incoming client it's not registered yet, and disconnect
@@ -561,10 +561,12 @@ static void state_verification(const bt_buffer *param)
 
 static void state_pin(const bt_buffer *param)
 {
+    static uint8_t _num_retry;
     switch (param->event)
     {
     case EVENT_TRANSITION:
         _setTimeout(BT_ENABLE, 60); // 1 minute to enter pin
+        _num_retry = 0;
         break;
     case EVENT_BT_INPUT:
         bt_buffer pin;
@@ -598,8 +600,14 @@ static void state_pin(const bt_buffer *param)
             }
             else
             {
-                _sendReply(NACK);
-                change_state(STATE_ALARM);
+                _num_retry++;
+                if (_num_retry < BT_MAX_RETRY)
+                    _sendReply(RETRY);
+                else
+                {
+                    _sendReply(NACK);
+                    change_state(STATE_ALARM);
+                }
             }
         }
         else
