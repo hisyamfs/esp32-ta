@@ -627,7 +627,7 @@ int setAlarmImp(int enable, int duration)
 #if DEBUG_MODE == 1
 		Serial.printf("Alarm ticker off\n");
 #endif // DEBUG_MODE
-		toggleAlarm(BT_DISABLE);
+		// toggleAlarm(BT_DISABLE);
 		alarm_ticker.detach();
 	}
 	if (enable == BT_ENABLE)
@@ -637,6 +637,14 @@ int setAlarmImp(int enable, int duration)
 #endif // DEBUG_MODE
 		toggleAlarm(BT_ENABLE);
 		alarm_ticker.once(duration, toggleAlarm, BT_DISABLE);
+	}
+	else
+	{
+#if DEBUG_MODE == 1
+		Serial.printf("Alarm ticker off, alarm\n");
+#endif // DEBUG_MODE
+		toggleAlarm(BT_DISABLE);
+		alarm_ticker.detach();
 	}
 	is_active = enable;
 	return BT_SUCCESS;
