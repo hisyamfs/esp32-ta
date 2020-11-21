@@ -747,17 +747,27 @@ static void state_unlock_disconnect(const bt_buffer *param)
 
 static void state_new_pin(const bt_buffer *param)
 {
+    static size_t num_retry = 0;
+    static bt_buffer pin, npin; // Disgusting
     switch (param->event)
     {
     case EVENT_TRANSITION:
         _setTimeout(BT_ENABLE, 60); // 60 s timeout to enter new pin
+        num_retry = 0;
+        init_bt_buffer(&pin);
+        init_bt_buffer(&npin);
         break;
     case EVENT_BT_INPUT:
-        bt_buffer pin;
-        init_bt_buffer(&pin);
-        if (_decryptBT(param, &pin) == BT_SUCCESS)
+        // first entry
+        if (num_retry == 0 && _decryptBT(param, &npin) == BT_SUCCESS)
         {
-            if (_storeCredential(&pin, &client) == BT_SUCCESS)
+            num_retry++;
+            _sendReply(RETRY);
+        }
+        else if (_decryptBT(param, &pin) == BT_SUCCESS) // second entry
+        {
+            if (compareBT(&pin, &npin) == BT_SUCCESS &&
+                _storeCredential(&pin, &client) == BT_SUCCESS)
             {
                 if (load_user_cred((const uint8_t *)&pin.data, pin.len,
                                    (const uint8_t *)&client.data, client.len) == BT_SUCCESS)
