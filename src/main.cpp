@@ -94,16 +94,17 @@ void checkBypass();
 void setupImmobilizer();
 void enableImmobilizer();
 void disableImmobilizer();
+void setupAlarm();
 
 void printBytes(const unsigned char *byte_arr, unsigned int len, const char *header, unsigned int header_len);
 void printError(int errcode);
 void onBTInputInterface(const uint8_t *buffer, size_t blen);
 void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 
-int Voltage1;
-int Voltage2;
-int Current1;
-int Current2;
+float Voltage1 = 0.0f;
+float Voltage2 = 0.0f;
+float Current1 = 0.0f;
+float Current2 = 0.0f;
 
 TaskHandle_t Task1;
 TaskHandle_t Task2;
@@ -115,8 +116,8 @@ void Task1code(void *pvParameters)
 	for (;;)
 	{
 		readCurrent();
-		// displayMeasurement();
-		// checkBypass();
+		displayMeasurement();
+		checkBypass();
 		vTaskDelay(pdMS_TO_TICKS(20));
 	}
 }
@@ -179,19 +180,19 @@ void readCurrent(void)
 	Voltage2 = (Voltage2 / 1000) - 2.058;
 
 	// Sensed voltage is converter to current (using sensitivity)
-	Current1 = (Voltage1) / 0.1;
-	Current2 = (Voltage2) / 0.1;
+	Current1 = (Voltage1) / 0.185;
+	Current2 = (Voltage2) / 0.185;
 }
 
 void displayMeasurement(void)
 {
 	Serial.print(Voltage1, 3);
 	Serial.print("V  ");
-	Serial.print(Current1, 3); // the �2� after voltage allows you to display 2 digits after decimal point
+	Serial.print(Current1, 3); // the ?2? after voltage allows you to display 2 digits after decimal point
 	Serial.print("A      ");
 	Serial.print(Voltage2, 3);
 	Serial.print("V  ");
-	Serial.print(Current2, 3); // the �2� after voltage allows you to display 2 digits after decimal point
+	Serial.print(Current2, 3); // the ?2? after voltage allows you to display 2 digits after decimal point
 	Serial.print("A   ");
 }
 
@@ -200,36 +201,74 @@ void checkBypass(void)
 	bt_buffer engine;
 	//Current1 = Current from ECU
 	//Current2 = Current from Contact Key
-	if (3 * Current1 < Current2)
+	if ((Current1 < 0.1) && (Current2 < 0.1))
 	{
-		digitalWrite(BUZZER, HIGH);
-		Serial.println("AWAS, TERJADI BYPASS");
-		// SerialBT.disconnect();
-
-		/** Uncomment kalo mau coba pake event di bawah, tapi belum pernah dicoba */
-		// const uint8_t is_bypassed = BT_ENABLE;
-		// if (raise_event(&engine, EVENT_BYPASS_DETECTOR, &is_bypassed, 1) == BT_SUCCESS)
-		// 	xQueueSend(qFsmEvent, &engine, 0);
+		digitalWrite(BUZZER, LOW);
+		Serial.println("Mesin Mati");
+		// onEngineEvent(BT_DISABLE);
+		//vTaskDelay(pdMS_TO_TICKS(7000));
+		uint8_t off_key = BT_DISABLE;
+		if (raise_event(&engine, EVENT_ENGINE, &off_key, 1) == BT_SUCCESS)
+			xQueueSend(qFsmEvent, &engine, 0);
 	}
 	else
 	{
-		if (Current1 < 0.05)
+		if (Current1 < 0.1)
 		{
-			digitalWrite(BUZZER, LOW);
-			Serial.println("Mesin Mati");
-			// onEngineEvent(BT_DISABLE);
+			digitalWrite(BUZZER, HIGH);
+			Serial.println("AWAS, TERJADI BYPASS");
+			// SerialBT.disconnect();
 
-			uint8_t off_key = BT_DISABLE;
-			if (raise_event(&engine, EVENT_ENGINE, &off_key, 1) == BT_SUCCESS)
+			/** Uncomment kalo mau coba pake event di bawah, tapi belum pernah dicoba */
+			const uint8_t is_bypassed = BT_ENABLE;
+			if (raise_event(&engine, EVENT_BYPASS_DETECTOR, &is_bypassed, 1) == BT_SUCCESS)
 				xQueueSend(qFsmEvent, &engine, 0);
 		}
 		else
 		{
 			digitalWrite(BUZZER, LOW);
-			// Serial.println("Aman");
+			Serial.println("Mesin Nyala");
 		}
 	}
-	delay(10);
+	/*if(Current1 - Current2 > 0.1)
+  {
+      digitalWrite(BUZZER, HIGH);
+      Serial.println("AWAS, TERJADI BYPASS");
+      // SerialBT.disconnect();
+
+      /Uncomment kalo mau coba pake event di bawah, tapi belum pernah dicoba
+      const uint8_t is_bypassed = BT_ENABLE;
+      if (raise_event(&engine, EVENT_BYPASS_DETECTOR, &is_bypassed, 1) == BT_SUCCESS)
+      xQueueSend(qFsmEvent, &engine, 0);
+  }
+  else
+  {
+    if (Current1 < 0.2)
+    {
+      digitalWrite(BUZZER, LOW);
+      Serial.println("Mesin Mati");
+      // onEngineEvent(BT_DISABLE);
+      vTaskDelay(pdMS_TO_TICKS(7000));
+      uint8_t off_key = BT_DISABLE;
+      if (raise_event(&engine, EVENT_ENGINE, &off_key, 1) == BT_SUCCESS)
+        xQueueSend(qFsmEvent, &engine, 0);
+    }
+    else
+    {
+      digitalWrite(BUZZER, LOW);
+      Serial.println("Mesin Nyala");
+    }
+  }*/
+
+	//delay(10);
+}
+
+void setupAlarm()
+{
+	pinMode(BUZZER, OUTPUT);
+	pinMode(LED, OUTPUT);
+	digitalWrite(BUZZER, LOW);
+	digitalWrite(LED, LOW);
 }
 
 // Baca posisi kunci motor pengguna -Ini udh ga perlu lagi keknya (Abel)
@@ -247,8 +286,8 @@ void readKeyInput()
 	// current_val = digitalRead(ENGINE);
 	// if (current_val != prev_val)
 	// {
-	// 	// onEngineEvent(current_val);
-	// 	prev_val = current_val;
+	//  // onEngineEvent(current_val);
+	//  prev_val = current_val;
 	// }
 }
 
@@ -259,8 +298,10 @@ void setup()
 	Serial.begin(115200);
 
 	Serial.println("Initializing immobilizer....");
+	// pinMode(BUZZER, OUTPUT);
+	setupAlarm();
 	setupImmobilizer();
-	setImmobilizerImp(BT_ENABLE);
+	setImmobilizerImp(!BT_ENABLE);
 	setupKeyInput();
 
 	Serial.println("Initializing state machine....");
@@ -392,9 +433,9 @@ void loop()
 	// size_t slen = Serial.available();
 	// if (slen > 0 && slen <= 32)
 	// {
-	// 	char sbuf[32];
-	// 	Serial.readBytes(sbuf, slen);
-	// 	onSInput((const uint8_t *)sbuf, slen);
+	//  char sbuf[32];
+	//  Serial.readBytes(sbuf, slen);
+	//  onSInput((const uint8_t *)sbuf, slen);
 	// }
 	// readKeyInput();
 	// delay(20);
@@ -614,9 +655,17 @@ int deleteStoredCredImp(void)
 void toggleAlarm(int enable)
 {
 	if (enable == BT_ENABLE)
-		Serial.printf("ALARM ON!!!!\n");
+	{
+		//Serial.printf("ALARM ON!!!!\n");
+		digitalWrite(BUZZER, HIGH);
+		if (DEBUG_MODE) digitalWrite(LED, HIGH);
+	}
 	else
-		Serial.printf("ALARM OFF!!!\n");
+	{
+		//Serial.printf("ALARM OFF!!!\n");
+		digitalWrite(BUZZER, LOW);
+		if (DEBUG_MODE) digitalWrite(LED, LOW);
+	}
 }
 
 int setAlarmImp(int enable, int duration)
@@ -626,8 +675,8 @@ int setAlarmImp(int enable, int duration)
 	{
 #if DEBUG_MODE == 1
 		Serial.printf("Alarm ticker off\n");
-#endif // DEBUG_MODE
-		// toggleAlarm(BT_DISABLE);
+#endif // DEBUG_MODE \
+	// toggleAlarm(BT_DISABLE);
 		alarm_ticker.detach();
 	}
 	if (enable == BT_ENABLE)
@@ -749,12 +798,13 @@ void printError(int errcode)
 
 void disableImmobilizer()
 {
-	digitalWrite(LED, HIGH);
+	vTaskDelay(pdMS_TO_TICKS(7000));
+	digitalWrite(RELAY, LOW);
 }
 
 void enableImmobilizer()
 {
-	digitalWrite(LED, LOW);
+	digitalWrite(RELAY, HIGH);
 }
 
 void setupImmobilizer()
