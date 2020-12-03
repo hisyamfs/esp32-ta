@@ -101,10 +101,10 @@ void printError(int errcode);
 void onBTInputInterface(const uint8_t *buffer, size_t blen);
 void custom_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 
-float Voltage1 = 0.0f;
-float Voltage2 = 0.0f;
-float Current1 = 0.0f;
-float Current2 = 0.0f;
+double Voltage1 = 0.0f;
+double Voltage2 = 0.0f;
+double Current1 = 0.0f;
+double Current2 = 0.0f;
 
 TaskHandle_t Task1;
 TaskHandle_t Task2;
@@ -116,9 +116,9 @@ void Task1code(void *pvParameters)
 	for (;;)
 	{
 		readCurrent();
-		displayMeasurement();
-		checkBypass();
-		vTaskDelay(pdMS_TO_TICKS(20));
+		// displayMeasurement();
+		// checkBypass();
+		// vTaskDelay(pdMS_TO_TICKS(20));
 	}
 }
 
